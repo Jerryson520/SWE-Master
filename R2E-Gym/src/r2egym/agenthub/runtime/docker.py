@@ -853,30 +853,6 @@ class DockerRuntime(ExecutionEnvironment):
 
             # make symlink of conda env to /root/.venv
             self.run(f"ln -s /opt/miniconda3/envs/testbed /root/.venv")
-
-            # install required packages TODO: check if working
-            # self.run(
-            #     "python -m pip install tree-sitter==0.20.4 tree_sitter_languages==1.10.2"
-            # )
-            self.run("pip install chardet --trusted-host pypi-mirror.weizhipin.com -i http://pypi-mirror.weizhipin.com/bzl-aliyun-pypi/simple")
-
-            check_chardet_num_all = 3
-            for check_chardet_num in range(check_chardet_num_all):
-                result_check_chardet = self.run(
-                            "python -m pip show chardet > /dev/null 2>&1 && echo true || echo false"
-                        )
-                if "false" in result_check_chardet[0]:
-                    self.logger.info(
-                     f"Re-installing chardet"
-                )
-                    self.run("sleep 10")
-                    self.run("python -m pip install chardet")
-                else:
-                    break
-
-            # sudo apt-get install patchutils
-            # self.run("apt-get update")
-            # self.run("apt-get install -y patchutils")
         except Exception as e:
             self.logger.error(
                 f"Error setting up environment: {repr(e)} @ {self.docker_image}"

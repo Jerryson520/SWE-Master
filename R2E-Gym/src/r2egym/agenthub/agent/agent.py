@@ -101,9 +101,14 @@ class Agent:
             if ("openai/" in self.llm_name) or ("hosted_vllm" in self.llm_name)
             else None
         )
+
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_key and "hosted_vllm" in self.llm_name:
+            api_key = "EMPTY"
+            os.environ["OPENAI_API_KEY"] = api_key
         
         self.logger.info(f"llm base url:{self.llm_base_url}")
-        self.logger.info(f"llm api_key:{os.environ['OPENAI_API_KEY']}")
+        self.logger.info(f"llm api key configured:{bool(api_key)}")
         
         self.system_prompt_template = args.system_prompt
         self.instance_prompt_template = args.instance_prompt

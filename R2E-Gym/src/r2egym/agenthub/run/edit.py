@@ -6,12 +6,15 @@ managing Docker image pulling, environment setup, agent execution, and result co
 """
 
 import concurrent.futures
+import ipaddress
 import json
+import os
 import threading
 import time
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
+from urllib.parse import urlparse
 
 import docker
 from datasets import load_dataset, load_from_disk
@@ -84,6 +87,36 @@ def is_valid_swebench_verified_image(
     if not docker_image.startswith(SWEBENCH_VERIFIED_IMAGE_PREFIX):
         return True
     return image_contains_file(client, docker_image, SWEBENCH_TEST_RUNNER)
+
+
+def configure_loopback_llm_no_proxy() -> None:
+    """Keep a loopback-hosted LLM out of HTTP proxy routing."""
+    api_base = os.environ.get("OPENAI_API_BASE") or os.environ.get(
+        "OPENAI_BASE_URL"
+    )
+    if not api_base:
+        return
+
+    hostname = urlparse(api_base).hostname
+    if not hostname:
+        return
+
+    try:
+        is_loopback = ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
+        is_loopback = hostname == "localhost"
+    if not is_loopback:
+        return
+
+    required_hosts = {"localhost", "127.0.0.1", "::1", hostname}
+    for variable in ("NO_PROXY", "no_proxy"):
+        configured_hosts = {
+            item.strip()
+            for item in os.environ.get(variable, "").split(",")
+            if item.strip()
+        }
+        os.environ[variable] = ",".join(sorted(configured_hosts | required_hosts))
+    logger.info(f"Bypassing HTTP proxies for loopback LLM endpoint: {hostname}")
 
 
 def prepull_docker_image(docker_image: str, ip: str = "") -> bool:
@@ -519,6 +552,7 @@ def runagent_multiple(
     max_iterations: int = 1,
     scaffold: str = "r2egym",
     prepull_images: bool = False,
+    prepull_workers: Optional[int] = 4,
     max_tokens: int = 131072,
     ip: str = "",
     used_yaml: str = "",
@@ -558,6 +592,7 @@ def runagent_multiple(
         max_iterations: Maximum number of iterations.
         scaffold: Scaffold type ("r2egym", "sweagent", "openhands").
         prepull_images: Whether to prepull Docker images in parallel.
+        prepull_workers: Maximum concurrent image pulls, independent of agent workers.
         max_tokens: Maximum token limit for the agent.
         ip: IP address of the Docker daemon.
         used_yaml: Path to custom YAML configuration file.
@@ -570,6 +605,11 @@ def runagent_multiple(
         use_single_turn_summary: Whether to use single-turn summarization.
         memory_output_path: Optional path to save memory output.
     """
+    configure_loopback_llm_no_proxy()
+
+    if prepull_workers is not None and prepull_workers < 1:
+        raise ValueError("prepull_workers must be at least 1")
+
     # Load the dataset
     if dataset.endswith(".json"):
         with open(dataset, "r") as f:
@@ -664,8 +704,13 @@ def runagent_multiple(
 
     # Prepull all Docker images in parallel before starting main execution
     if ds_selected and prepull_images:
-        logger.info("Prepulling Docker images before starting main execution...")
-        prepull_docker_images(ds_selected, max_workers=max_workers, ip=ip)
+        logger.info(
+            "Prepulling Docker images before starting main execution "
+            f"with up to {prepull_workers or 'default'} workers..."
+        )
+        prepull_docker_images(
+            ds_selected, max_workers=prepull_workers, ip=ip
+        )
         logger.info("Docker image prepull completed.")
 
     # with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
