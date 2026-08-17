@@ -834,7 +834,14 @@ class DockerRuntime(ExecutionEnvironment):
 
     def setup_env_swebench(self):
         try:
-            # make the run_tests.sh executable
+            # SWE-Bench Verified must use R2E-Gym's custom image. Do not silently
+            # continue with a look-alike image that only contains /testbed.
+            _, runner_check_code = self.run("test -f /run_tests.sh")
+            if str(runner_check_code) != "0":
+                raise RuntimeError(
+                    f"Docker image {self.docker_image} is missing /run_tests.sh; "
+                    "use the original slimshetty/swebench-verified image"
+                )
             self.run("chmod +x /run_tests.sh")
 
             # # move all skip files (if present) to /root
@@ -874,6 +881,7 @@ class DockerRuntime(ExecutionEnvironment):
             self.logger.error(
                 f"Error setting up environment: {repr(e)} @ {self.docker_image}"
             )
+            raise
 
     def setup_env(self):
         if self.swebench_verified:

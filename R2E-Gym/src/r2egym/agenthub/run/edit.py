@@ -32,6 +32,8 @@ file_lock = threading.Lock()
 
 # Timeout for agent execution in seconds
 TIMEOUT_SECONDS = 1200
+SWEBENCH_VERIFIED_IMAGE_PREFIX = "slimshetty/swebench-verified:"
+SWEBENCH_TEST_RUNNER = "/run_tests.sh"
 
 ##############################################################################
 def get_docker_images(repo_name: str) -> List[str]:
@@ -48,6 +50,40 @@ def get_docker_images(repo_name: str) -> List[str]:
     tags = fetch_docker_tags(base_image)
     docker_image_list = [f"{base_image}:{x['name']}" for x in tags]
     return docker_image_list
+
+
+def image_contains_file(client: docker.DockerClient, docker_image: str, path: str) -> bool:
+    """Check a file in an image without starting the container."""
+    container = None
+    archive_stream = None
+    try:
+        container = client.containers.create(docker_image, command=["/bin/true"])
+        archive_stream, _ = container.get_archive(path)
+        return True
+    except docker.errors.NotFound:
+        return False
+    except Exception as exc:
+        logger.error(f"Failed to inspect {path} in Docker image {docker_image}: {exc}")
+        return False
+    finally:
+        if archive_stream is not None and hasattr(archive_stream, "close"):
+            archive_stream.close()
+        if container is not None:
+            try:
+                container.remove(force=True)
+            except Exception as exc:
+                logger.warning(
+                    f"Failed to remove validation container for {docker_image}: {exc}"
+                )
+
+
+def is_valid_swebench_verified_image(
+    client: docker.DockerClient, docker_image: str
+) -> bool:
+    """Reject look-alike images that lack R2E-Gym's required test runner."""
+    if not docker_image.startswith(SWEBENCH_VERIFIED_IMAGE_PREFIX):
+        return True
+    return image_contains_file(client, docker_image, SWEBENCH_TEST_RUNNER)
 
 
 def prepull_docker_image(docker_image: str, ip: str = "") -> bool:
@@ -74,17 +110,29 @@ def prepull_docker_image(docker_image: str, ip: str = "") -> bool:
         # Check if the image already exists locally
         try:
             client.images.get(docker_image)
-            logger.info(f"Docker image already exists locally: {docker_image}")
-            return True
+            if is_valid_swebench_verified_image(client, docker_image):
+                logger.info(f"Docker image already exists locally: {docker_image}")
+                return True
+            logger.warning(
+                f"Local image {docker_image} is not the R2E-Gym custom image: "
+                f"missing {SWEBENCH_TEST_RUNNER}. Pulling the original image."
+            )
         except docker.errors.ImageNotFound:
-            # Image doesn't exist locally, proceed to pull
-            logger.info(f"Docker image not found locally, pulling: {docker_image}")
-            client.images.pull(docker_image)
-            logger.info(f"Successfully pulled Docker image: {docker_image}")
-            return True
+            logger.info(f"Docker image not found locally: {docker_image}")
         except Exception as e:
             logger.error(f"Error checking for existing Docker image {docker_image}: {e}")
             return False
+
+        logger.info(f"Pulling Docker image: {docker_image}")
+        client.images.pull(docker_image)
+        if not is_valid_swebench_verified_image(client, docker_image):
+            logger.error(
+                f"Pulled image {docker_image} is missing {SWEBENCH_TEST_RUNNER}; "
+                "refusing to run a non-R2E-Gym image under the custom image tag."
+            )
+            return False
+        logger.info(f"Successfully pulled and validated Docker image: {docker_image}")
+        return True
     except Exception as e:
         logger.error(f"Failed to pull Docker image {docker_image}: {e}")
         return False
@@ -129,7 +177,10 @@ def prepull_docker_images(ds_selected: List[Dict], max_workers: Optional[int] = 
 
     logger.info(f"Prepull completed. Success: {len(successful_pulls)}, Failed: {len(failed_pulls)}")
     if failed_pulls:
-        logger.warning(f"Failed to pull images: {failed_pulls}")
+        raise RuntimeError(
+            "Required Docker images could not be pulled and validated: "
+            + ", ".join(sorted(failed_pulls))
+        )
 
 
 ##############################################################################

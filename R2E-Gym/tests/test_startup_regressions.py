@@ -55,6 +55,34 @@ class StartupRegressionTests(unittest.TestCase):
         self.assertEqual(len(docker_host_assignments), 1)
         self.assertIsInstance(docker_host_assignments[0].value, ast.IfExp)
 
+    def test_swebench_image_validation_requires_custom_test_runner(self):
+        tree = parse_source("src/r2egym/agenthub/run/edit.py")
+        validator = find_function(tree, "is_valid_swebench_verified_image")
+        validator_source = ast.unparse(validator)
+
+        self.assertIn("SWEBENCH_VERIFIED_IMAGE_PREFIX", validator_source)
+        self.assertIn("SWEBENCH_TEST_RUNNER", validator_source)
+        self.assertIn("image_contains_file", validator_source)
+
+    def test_failed_prepull_is_fatal(self):
+        tree = parse_source("src/r2egym/agenthub/run/edit.py")
+        function = find_function(tree, "prepull_docker_images")
+
+        self.assertTrue(
+            any(isinstance(node, ast.Raise) for node in ast.walk(function)),
+            "prepull failures must stop the run instead of producing a false completion",
+        )
+
+    def test_missing_swebench_runner_aborts_environment_setup(self):
+        tree = parse_source("src/r2egym/agenthub/runtime/docker.py")
+        function = find_function(tree, "setup_env_swebench")
+        function_source = ast.unparse(function)
+
+        self.assertIn("test -f /run_tests.sh", function_source)
+        self.assertGreaterEqual(
+            sum(isinstance(node, ast.Raise) for node in ast.walk(function)), 2
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
