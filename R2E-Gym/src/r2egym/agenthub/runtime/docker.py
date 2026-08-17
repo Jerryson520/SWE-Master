@@ -195,8 +195,8 @@ class DockerRuntime(ExecutionEnvironment):
             from swebench_fork_swegym.harness.test_spec import TestSpec
             if "make_test_spec" in self.ds:
                 self.logger.info("self.ds has make_test_spec, read directly")
-                make_test_spec = json.loads(self.ds['make_test_spec'])
-                self.test_spec = TestSpec(**make_test_spec)
+                test_spec_data = json.loads(self.ds['make_test_spec'])
+                self.test_spec = TestSpec(**test_spec_data)
                 self.logger.info("has successfully read test_spec")
             
             else:
@@ -219,8 +219,8 @@ class DockerRuntime(ExecutionEnvironment):
             from swebench.harness.test_spec.test_spec import TestSpec
             if "make_test_spec" in self.ds:
                 self.logger.info("self.ds has make_test_spec, read directly")
-                make_test_spec = json.loads(self.ds['make_test_spec'])
-                self.test_spec = TestSpec(**make_test_spec)
+                test_spec_data = json.loads(self.ds['make_test_spec'])
+                self.test_spec = TestSpec(**test_spec_data)
                 self.logger.info("has successfully read test_spec")
                 
             else:
@@ -241,8 +241,8 @@ class DockerRuntime(ExecutionEnvironment):
             from swebench_fork_swerebench.harness.test_spec.test_spec import TestSpec
             if "make_test_spec" in self.ds:
                 self.logger.info("self.ds has make_test_spec, read directly")
-                make_test_spec = json.loads(self.ds['make_test_spec'])
-                self.test_spec = TestSpec(**make_test_spec)
+                test_spec_data = json.loads(self.ds['make_test_spec'])
+                self.test_spec = TestSpec(**test_spec_data)
                 self.logger.info("has successfully read test_spec")
                 
             else:
@@ -274,19 +274,22 @@ class DockerRuntime(ExecutionEnvironment):
         self.docker_kwargs = docker_kwargs
 
 
-        self.ip = ip
-        self.docker_host = r"tcp://" + self.ip + r":2375"
-        custom_env = {
-            'DOCKER_HOST': self.docker_host, 
-            'DOCKER_TLS_VERIFY': DOCKER_TLS_VERIFY, 
-            'DOCKER_CERT_PATH': DOCKER_CERT_PATH, 
-            # 'DOCKER_API_VERSION': '1.40' 
-        }
+        self.ip = ip or ""
+        self.docker_host = f"tcp://{self.ip}:2375" if self.ip else None
         print("=docker-ip="*20)
         print(f"connection to docker, use ip:{self.ip}, docker_host:{self.docker_host}")
         self.logger.info(f"connection to docker, use ip:{self.ip}, docker_host:{self.docker_host}")
         if self.backend == "docker":
-            self.client = docker.from_env(timeout=120,environment=custom_env)
+            if self.docker_host:
+                custom_env = {
+                    'DOCKER_HOST': self.docker_host,
+                    'DOCKER_TLS_VERIFY': DOCKER_TLS_VERIFY,
+                    'DOCKER_CERT_PATH': DOCKER_CERT_PATH,
+                    # 'DOCKER_API_VERSION': '1.40'
+                }
+                self.client = docker.from_env(timeout=120, environment=custom_env)
+            else:
+                self.client = docker.from_env(timeout=120)
         elif self.backend == "kubernetes":
             # Try in-cluster config first, fallback to kubeconfig
             try:

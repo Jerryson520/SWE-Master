@@ -50,18 +50,23 @@ def get_docker_images(repo_name: str) -> List[str]:
     return docker_image_list
 
 
-def prepull_docker_image(docker_image: str) -> bool:
+def prepull_docker_image(docker_image: str, ip: str = "") -> bool:
     """
     Prepulls a single Docker image.
     
     Args:
-        docker_image: The Docker image name to pull
+        docker_image: The Docker image name to pull.
+        ip: Optional remote Docker daemon IP. When omitted, use the local
+            Docker socket configured in the environment.
         
     Returns:
         True if successful, False otherwise
     """
     try:
-        client = docker.from_env()
+        if ip:
+            client = docker.DockerClient(base_url=f"tcp://{ip}:2375", timeout=120)
+        else:
+            client = docker.from_env(timeout=120)
 
         # existing_images = client.images.list(name=docker_image.split(":")[0])
         
