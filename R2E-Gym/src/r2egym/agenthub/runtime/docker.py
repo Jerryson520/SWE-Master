@@ -834,6 +834,8 @@ class DockerRuntime(ExecutionEnvironment):
 
     def setup_env_swebench(self):
         try:
+            self.run("git reset --hard HEAD")
+
             # SWE-Bench Verified must use R2E-Gym's custom image. Do not silently
             # continue with a look-alike image that only contains /testbed.
             _, runner_check_code = self.run("test -f /run_tests.sh")
