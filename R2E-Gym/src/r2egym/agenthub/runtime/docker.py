@@ -853,6 +853,7 @@ class DockerRuntime(ExecutionEnvironment):
 
             # make symlink of conda env to /root/.venv
             self.run(f"ln -s /opt/miniconda3/envs/testbed /root/.venv")
+
         except Exception as e:
             self.logger.error(
                 f"Error setting up environment: {repr(e)} @ {self.docker_image}"

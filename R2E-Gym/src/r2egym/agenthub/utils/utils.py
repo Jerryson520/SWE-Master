@@ -11,7 +11,7 @@ from datetime import datetime
 from fire import Fire
 from r2egym.commit_models.diff_classes import ParsedCommit
 import numpy as np
-from huggingface_hub import create_repo, upload_folder, HfFolder
+from huggingface_hub import create_repo, upload_folder
 import os
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import subprocess

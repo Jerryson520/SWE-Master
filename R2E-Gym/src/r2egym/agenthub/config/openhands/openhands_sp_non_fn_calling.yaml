@@ -278,3 +278,8 @@ demo_file: "./r2egym/agenthub/config/localizer-demo"
 other_args:
   max_retries: 3
   timeout: 120
+  context_window: 32768
+  context_safety_margin: 1024
+  max_output_tokens: 2048
+  summary_context_window: 32768
+  summary_max_output_tokens: 2048

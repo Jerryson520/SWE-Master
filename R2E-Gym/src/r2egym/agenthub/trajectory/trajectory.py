@@ -76,7 +76,13 @@ class Trajectory(BaseModel):
     max_steps: int
     max_steps_absolute: int
     # tokens
-    max_token_limit: int
+    max_token_limit: Optional[int] = None  # Deprecated; retained for old JSONL files.
+    context_window: Optional[int] = None
+    max_output_tokens: Optional[int] = None
+    context_safety_margin: Optional[int] = None
+    max_trajectory_output_tokens: Optional[int] = None
+    trajectory_completion_tokens: int = 0
+    summary_completion_tokens: int = 0
     # time
     max_llm_time: int  # per query
     max_exec_time: int  # per env execution
