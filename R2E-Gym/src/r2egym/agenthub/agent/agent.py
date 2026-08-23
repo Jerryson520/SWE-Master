@@ -33,7 +33,17 @@ from r2egym.agenthub.tools import (
 import traceback
 
 logger = get_logger(__name__)  # Logger for this module
-MAX_CONTEXT_TOKENS = 131072
+DEFAULT_CONTEXT_WINDOW = 32768
+DEFAULT_MAX_OUTPUT_TOKENS = 2048
+DEFAULT_CONTEXT_SAFETY_MARGIN = 1024
+
+
+class ContextLimitError(ValueError):
+    """Raised when a request cannot fit in the configured context window."""
+
+
+class SummaryContextLimitError(ContextLimitError):
+    """Raised when a memory-summary request cannot fit in its context window."""
 
 ##############################################################################
 # AgentArgs Dataclass
@@ -101,9 +111,14 @@ class Agent:
             if ("openai/" in self.llm_name) or ("hosted_vllm" in self.llm_name)
             else None
         )
+
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_key and "hosted_vllm" in self.llm_name:
+            api_key = "EMPTY"
+            os.environ["OPENAI_API_KEY"] = api_key
         
         self.logger.info(f"llm base url:{self.llm_base_url}")
-        self.logger.info(f"llm api_key:{os.environ['OPENAI_API_KEY']}")
+        self.logger.info(f"llm api key configured:{bool(api_key)}")
         
         self.system_prompt_template = args.system_prompt
         self.instance_prompt_template = args.instance_prompt
@@ -114,6 +129,8 @@ class Agent:
         self.max_retries = self.other_args.get("max_retries", 3)
         self.llm_timeout = self.other_args.get("timeout", 300)
         self.contenxt_id = ""
+        self.trajectory_completion_tokens = 0
+        self.summary_completion_tokens = 0
 
 
     def reset(self):
@@ -128,6 +145,68 @@ class Agent:
         token_count = litellm.token_counter(model=self.llm_name, messages=messages)
         self.logger.info(f"Total tokens in conversation: {token_count}")
         return token_count
+
+    def _request_max_output_tokens(
+        self,
+        prompt_tokens: int,
+        remaining_trajectory_tokens: Optional[int] = None,
+        summary: bool = False,
+    ) -> int:
+        """Return an output budget that fits all per-request limits."""
+        prefix = "summary_" if summary else ""
+        configured_max_output_tokens = int(
+            self.other_args.get(
+                f"{prefix}max_output_tokens", DEFAULT_MAX_OUTPUT_TOKENS
+            )
+        )
+        context_window = int(
+            self.other_args.get(
+                f"{prefix}context_window",
+                self.other_args.get("context_window", DEFAULT_CONTEXT_WINDOW),
+            )
+        )
+        context_safety_margin = int(
+            self.other_args.get(
+                f"{prefix}context_safety_margin",
+                self.other_args.get(
+                    "context_safety_margin", DEFAULT_CONTEXT_SAFETY_MARGIN
+                ),
+            )
+        )
+
+        if configured_max_output_tokens <= 0:
+            raise ValueError("max_output_tokens must be positive")
+        if context_window <= 0:
+            raise ValueError("context_window must be positive")
+        if context_safety_margin < 0:
+            raise ValueError("context_safety_margin cannot be negative")
+
+        available_output_tokens = (
+            context_window - prompt_tokens - context_safety_margin
+        )
+        if available_output_tokens <= 0:
+            error_type = SummaryContextLimitError if summary else ContextLimitError
+            raise error_type(
+                "Insufficient context space before LLM request: "
+                f"prompt_tokens={prompt_tokens}, context_window={context_window}, "
+                f"context_safety_margin={context_safety_margin}"
+            )
+
+        limits = [configured_max_output_tokens, available_output_tokens]
+        if remaining_trajectory_tokens is not None:
+            if remaining_trajectory_tokens <= 0:
+                raise ContextLimitError("Trajectory output token budget is exhausted")
+            limits.append(remaining_trajectory_tokens)
+        request_max_output_tokens = min(limits)
+        self.logger.info(
+            "LLM token budget: "
+            f"prompt={prompt_tokens}, max_output={request_max_output_tokens}, "
+            f"configured_max_output={configured_max_output_tokens}, "
+            f"context_window={context_window}, "
+            f"safety_margin={context_safety_margin}, "
+            f"remaining_trajectory_tokens={remaining_trajectory_tokens}"
+        )
+        return request_max_output_tokens
 
 
     def model_summary(
@@ -153,12 +232,6 @@ class Agent:
         else:
             summary_url_base = self.llm_base_url
     
-        # Adjust max tokens based on the model type
-        if "deepseek" in summary_llm_name:
-            lite_llm_max_token = 8192
-        else:
-            lite_llm_max_token = 16384
-
         start_time = time.time()
         
         # Configure API key for local or remote models
@@ -170,9 +243,9 @@ class Agent:
 
         messages_ = copy.deepcopy(messages)
         total_tokens = self._count_tokens(messages_)
-        if total_tokens > MAX_CONTEXT_TOKENS:
-            logger.warning(f"Total tokens: {total_tokens} > {MAX_CONTEXT_TOKENS}")
-            raise ValueError(f"Total tokens: {total_tokens} > {MAX_CONTEXT_TOKENS}")
+        summary_max_output_tokens = self._request_max_output_tokens(
+            total_tokens, summary=True
+        )
         
         # Query with retry logic
         while retries < self.max_retries:
@@ -191,7 +264,7 @@ class Agent:
                     messages=messages_,
                     timeout=180,
                     api_base=summary_url_base,
-                    max_tokens=lite_llm_max_token,
+                    max_tokens=summary_max_output_tokens,
                     **kwargs,
                 )
                 self.logger.warning(f"Querying LLM complete")
@@ -205,22 +278,25 @@ class Agent:
                 if retries >= self.max_retries:
                     raise e
 
+        if response is not None and hasattr(response, "usage"):
+            self.summary_completion_tokens += max(
+                0, int(getattr(response.usage, "completion_tokens", 0))
+            )
         exec_time = time.time() - start_time
         return response, exec_time
 
     def model_query(
-        self, messages: List[Dict[str, str]], temperature: float = 0, use_lsp: bool = False) -> Dict[str, Any]:
+        self,
+        messages: List[Dict[str, str]],
+        temperature: float = 0,
+        use_lsp: bool = False,
+        remaining_trajectory_tokens: Optional[int] = None,
+    ) -> Dict[str, Any]:
         """Main method to query the LLM for agent actions."""
         response = None
         retries = 0
         tools = None
         
-        # Setting max output tokens
-        if "deepseek" in self.llm_name.lower() or "qwen25-32b" in self.llm_name.lower():
-            lite_llm_max_token = 8192
-        else:
-            lite_llm_max_token = 16384
-
         # Configure tools based on the selected scaffold/framework
         if self.use_fn_calling:
             if self.scaffold == "r2egym":
@@ -252,9 +328,10 @@ class Agent:
 
         messages_ = copy.deepcopy(messages)
         total_tokens = self._count_tokens(messages_)
-        if total_tokens > MAX_CONTEXT_TOKENS:
-            logger.warning(f"Total tokens: {total_tokens} > {MAX_CONTEXT_TOKENS}")
-            raise ValueError(f"Total tokens: {total_tokens} > {MAX_CONTEXT_TOKENS}")
+        request_max_output_tokens = self._request_max_output_tokens(
+            total_tokens,
+            remaining_trajectory_tokens=remaining_trajectory_tokens,
+        )
         
         # LLM completion loop with retries
         while retries < self.max_retries:
@@ -274,7 +351,7 @@ class Agent:
                     messages=messages_,
                     timeout=360,
                     api_base=self.llm_base_url,
-                    max_tokens=lite_llm_max_token,
+                    max_tokens=request_max_output_tokens,
                     **kwargs,
                 )
                 self.logger.warning(f"Querying LLM complete")
@@ -386,7 +463,7 @@ class Agent:
         use_fn_calling: bool = True,
         max_steps: int = 10,
         max_steps_absolute: int = 50,
-        max_token_limit: int = 131072,
+        max_trajectory_output_tokens: int = 32768,
         max_exec_time: int = 90,
         max_total_time: int = 50000,
         max_llm_time: int = 7200,
@@ -408,6 +485,10 @@ class Agent:
         self.scaffold = scaffold
         start_time = time.time()
         self.llm_timeout = max_llm_time
+        if max_trajectory_output_tokens <= 0:
+            raise ValueError("max_trajectory_output_tokens must be positive")
+        self.trajectory_completion_tokens = 0
+        self.summary_completion_tokens = 0
 
         # Check if the model supports native function calling
         support_fn_calling = (
@@ -530,6 +611,10 @@ class Agent:
                     )
                 except Exception as e:
                     self.logger.error(f"Memory compression failed: {e}")
+                    if isinstance(e, SummaryContextLimitError):
+                        done = True
+                        exit_reason = "summary_context_limit"
+                        break
 
 
             # Query the LLM for the next action
@@ -538,13 +623,34 @@ class Agent:
             model_gen_finished_flag = False
             for model_gen_try in range(model_gen_max_num):
                 try:
-                    response, llm_exec_time = self.model_query(messages, temperature, use_lsp)
+                    remaining_trajectory_tokens = (
+                        max_trajectory_output_tokens
+                        - self.trajectory_completion_tokens
+                    )
+                    response, llm_exec_time = self.model_query(
+                        messages,
+                        temperature,
+                        use_lsp,
+                        remaining_trajectory_tokens=remaining_trajectory_tokens,
+                    )
                     model_gen_finished_flag = True
+                    break
+                except ContextLimitError as e:
+                    self.logger.info(f"Stopping before LLM request: {e}")
+                    done = True
+                    exit_reason = (
+                        "trajectory_token_limit"
+                        if self.trajectory_completion_tokens
+                        >= max_trajectory_output_tokens
+                        else "context_limit"
+                    )
                     break
                 except Exception as e:
                     self.logger.error(f"Error querying LLM: {e}. Attempt {model_gen_try+1} failed.")
                     self.logger.error(f"Traceback: {traceback.format_exc()}")
 
+            if done and not model_gen_finished_flag:
+                break
             if not model_gen_finished_flag:
                 done = True
                 exit_reason = "llm_query_error"
@@ -556,6 +662,7 @@ class Agent:
                 prompt_tokens = getattr(usage, "prompt_tokens", 0)
                 completion_tokens = getattr(usage, "completion_tokens", 0)
                 total_tokens = getattr(usage, "total_tokens", 0)
+                self.trajectory_completion_tokens += max(0, completion_tokens)
                 self.logger.info(
                     f"Prompt Tokens: {prompt_tokens}\nCompletion Tokens: {completion_tokens}\nTotal Tokens: {total_tokens}"
                 )
@@ -646,9 +753,9 @@ class Agent:
                     exit_reason = "max_step_limit"
                 else:
                     exit_reason = "agent_max_step_limit"
-            elif total_tokens >= max_token_limit:
-                self.logger.info("Agent reached token limit.")
-                exit_reason = "token_limit"
+            elif self.trajectory_completion_tokens >= max_trajectory_output_tokens:
+                self.logger.info("Agent reached trajectory output token limit.")
+                exit_reason = "trajectory_token_limit"
                 done = True
             elif step_count >= max_steps_absolute:
                 self.logger.info("Agent reached absolute step limit.")
@@ -711,7 +818,13 @@ class Agent:
             env_args=asdict(env.args),
             max_steps=max_steps,
             max_steps_absolute=max_steps_absolute,
-            max_token_limit=max_token_limit,
+            max_token_limit=None,
+            context_window=int(self.other_args.get("context_window", DEFAULT_CONTEXT_WINDOW)),
+            max_output_tokens=int(self.other_args.get("max_output_tokens", DEFAULT_MAX_OUTPUT_TOKENS)),
+            context_safety_margin=int(self.other_args.get("context_safety_margin", DEFAULT_CONTEXT_SAFETY_MARGIN)),
+            max_trajectory_output_tokens=max_trajectory_output_tokens,
+            trajectory_completion_tokens=self.trajectory_completion_tokens,
+            summary_completion_tokens=self.summary_completion_tokens,
             max_llm_time=max_llm_time,
             max_exec_time=max_exec_time,
             max_total_time=max_total_time,

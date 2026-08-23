@@ -229,7 +229,7 @@ def run_agent_with_restarts(
     use_fn_calling: bool = True,
     max_iterations: int = 1,
     scaffold: str = "r2egym",
-    max_tokens: int = 131072,
+    max_trajectory_output_tokens: int = 32768,
     use_lsp: bool = False,
     use_demo: str = "",
     enable_compression: bool = False,     # Whether to enable memory compression
@@ -262,7 +262,7 @@ def run_agent_with_restarts(
         use_fn_calling: Whether to use function calling.
         max_iterations: Maximum number of iterations.
         scaffold: Scaffold type ("r2egym", "sweagent", "openhands").
-        max_tokens: Maximum token limit for the agent.
+        max_trajectory_output_tokens: Cumulative Agent completion-token budget.
         use_lsp: Whether to use Language Server Protocol.
         use_demo: Demo string for few-shot learning.
         enable_compression: Whether to enable memory compression.
@@ -304,7 +304,7 @@ def run_agent_with_restarts(
                 max_steps_absolute=max_steps_absolute,
                 use_fn_calling=use_fn_calling,
                 scaffold=scaffold,
-                max_token_limit=max_tokens,
+                max_trajectory_output_tokens=max_trajectory_output_tokens,
                 use_lsp=use_lsp,
                 use_demo=use_demo,
                 enable_compression=enable_compression,     # Whether to enable memory compression
@@ -360,7 +360,11 @@ def runagent(
     max_reward_calc_time: int = 300,
     max_iterations: int = 1,
     scaffold: str = "r2egym",
-    max_tokens: int = 131072,
+    max_tokens: Optional[int] = None,
+    context_window: Optional[int] = None,
+    max_output_tokens: Optional[int] = None,
+    context_safety_margin: Optional[int] = None,
+    max_trajectory_output_tokens: Optional[int] = None,
     ip: str = "",
     use_lsp: bool = False,
     used_yaml: str = "",
@@ -390,7 +394,11 @@ def runagent(
         max_reward_calc_time: Maximum time to calculate reward.
         max_iterations: Maximum number of iterations.
         scaffold: Scaffold type ("r2egym", "sweagent", "openhands").
-        max_tokens: Maximum token limit for the agent.
+        max_tokens: Deprecated alias for max_trajectory_output_tokens.
+        context_window: Model input-plus-output context window.
+        max_output_tokens: Maximum completion tokens for one Agent request.
+        context_safety_margin: Reserved context space for tokenizer differences.
+        max_trajectory_output_tokens: Cumulative Agent completion-token budget.
         ip: IP address of the Docker daemon.
         use_lsp: Whether to use Language Server Protocol.
         used_yaml: Path to custom YAML configuration file.
@@ -414,6 +422,18 @@ def runagent(
     logger.info(f"Starting editagent on Docker image: {ds['docker_image']}")
     logger.info(f"Using LLM: {llm_name}")
     logger.info(f"Max Steps: {max_steps}")
+
+    if max_trajectory_output_tokens is None:
+        if max_tokens is not None:
+            logger.warning(
+                "--max_tokens is deprecated; use "
+                "--max_trajectory_output_tokens. Interpreting "
+                f"--max_tokens={max_tokens} as the cumulative Agent "
+                "completion-token budget."
+            )
+            max_trajectory_output_tokens = max_tokens
+        else:
+            max_trajectory_output_tokens = 32768
 
     assert scaffold in ["r2egym", "sweagent", "openhands"], f"Scaffold is {scaffold}, must be one of [r2egym, sweagent, openhands]"
     # Generate a unique experiment name if not provided
@@ -473,6 +493,22 @@ def runagent(
 
     logger.info("before agent")  
     agent_args.llm_name = llm_name
+    agent_args.other_args = dict(agent_args.other_args or {})
+    cli_token_config = {
+        "context_window": context_window,
+        "max_output_tokens": max_output_tokens,
+        "context_safety_margin": context_safety_margin,
+    }
+    agent_args.other_args.update(
+        {key: value for key, value in cli_token_config.items() if value is not None}
+    )
+    logger.info(
+        "Effective inference token configuration: "
+        f"context_window={agent_args.other_args.get('context_window', 32768)}, "
+        f"configured_max_output={agent_args.other_args.get('max_output_tokens', 2048)}, "
+        f"context_safety_margin={agent_args.other_args.get('context_safety_margin', 1024)}, "
+        f"max_trajectory_output_tokens={max_trajectory_output_tokens}"
+    )
 
     # Initialize the agent
     agent = Agent(name="EditAgent", args=agent_args, logger=logger)
@@ -489,7 +525,7 @@ def runagent(
             use_fn_calling=use_fn_calling,
             max_iterations=max_iterations,
             scaffold=scaffold,
-            max_tokens=max_tokens,
+            max_trajectory_output_tokens=max_trajectory_output_tokens,
             use_lsp=use_lsp,
             use_demo=use_demo,
             enable_compression=enable_compression,     # Whether to enable memory compression
@@ -553,7 +589,11 @@ def runagent_multiple(
     scaffold: str = "r2egym",
     prepull_images: bool = False,
     prepull_workers: Optional[int] = 4,
-    max_tokens: int = 131072,
+    max_tokens: Optional[int] = None,
+    context_window: Optional[int] = None,
+    max_output_tokens: Optional[int] = None,
+    context_safety_margin: Optional[int] = None,
+    max_trajectory_output_tokens: Optional[int] = None,
     ip: str = "",
     used_yaml: str = "",
     # ----- LSP parameters -----
@@ -593,7 +633,11 @@ def runagent_multiple(
         scaffold: Scaffold type ("r2egym", "sweagent", "openhands").
         prepull_images: Whether to prepull Docker images in parallel.
         prepull_workers: Maximum concurrent image pulls, independent of agent workers.
-        max_tokens: Maximum token limit for the agent.
+        max_tokens: Deprecated alias for max_trajectory_output_tokens.
+        context_window: Model input-plus-output context window.
+        max_output_tokens: Maximum completion tokens for one Agent request.
+        context_safety_margin: Reserved context space for tokenizer differences.
+        max_trajectory_output_tokens: Cumulative Agent completion-token budget.
         ip: IP address of the Docker daemon.
         used_yaml: Path to custom YAML configuration file.
         use_lsp: Whether to use Language Server Protocol.
@@ -606,6 +650,16 @@ def runagent_multiple(
         memory_output_path: Optional path to save memory output.
     """
     configure_loopback_llm_no_proxy()
+
+    if max_trajectory_output_tokens is None:
+        if max_tokens is not None:
+            logger.warning(
+                "--max_tokens is deprecated; use "
+                "--max_trajectory_output_tokens."
+            )
+            max_trajectory_output_tokens = max_tokens
+        else:
+            max_trajectory_output_tokens = 32768
 
     if prepull_workers is not None and prepull_workers < 1:
         raise ValueError("prepull_workers must be at least 1")
@@ -744,6 +798,10 @@ def runagent_multiple(
                 max_iterations=max_iterations,
                 scaffold=scaffold,
                 max_tokens=max_tokens,
+                context_window=context_window,
+                max_output_tokens=max_output_tokens,
+                context_safety_margin=context_safety_margin,
+                max_trajectory_output_tokens=max_trajectory_output_tokens,
                 ip=ip_used,
                 use_lsp=use_lsp,
                 used_yaml=used_yaml,
