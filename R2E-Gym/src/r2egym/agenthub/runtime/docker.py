@@ -195,8 +195,8 @@ class DockerRuntime(ExecutionEnvironment):
             from swebench_fork_swegym.harness.test_spec import TestSpec
             if "make_test_spec" in self.ds:
                 self.logger.info("self.ds has make_test_spec, read directly")
-                make_test_spec = json.loads(self.ds['make_test_spec'])
-                self.test_spec = TestSpec(**make_test_spec)
+                test_spec_data = json.loads(self.ds['make_test_spec'])
+                self.test_spec = TestSpec(**test_spec_data)
                 self.logger.info("has successfully read test_spec")
             
             else:
@@ -219,8 +219,8 @@ class DockerRuntime(ExecutionEnvironment):
             from swebench.harness.test_spec.test_spec import TestSpec
             if "make_test_spec" in self.ds:
                 self.logger.info("self.ds has make_test_spec, read directly")
-                make_test_spec = json.loads(self.ds['make_test_spec'])
-                self.test_spec = TestSpec(**make_test_spec)
+                test_spec_data = json.loads(self.ds['make_test_spec'])
+                self.test_spec = TestSpec(**test_spec_data)
                 self.logger.info("has successfully read test_spec")
                 
             else:
@@ -241,8 +241,8 @@ class DockerRuntime(ExecutionEnvironment):
             from swebench_fork_swerebench.harness.test_spec.test_spec import TestSpec
             if "make_test_spec" in self.ds:
                 self.logger.info("self.ds has make_test_spec, read directly")
-                make_test_spec = json.loads(self.ds['make_test_spec'])
-                self.test_spec = TestSpec(**make_test_spec)
+                test_spec_data = json.loads(self.ds['make_test_spec'])
+                self.test_spec = TestSpec(**test_spec_data)
                 self.logger.info("has successfully read test_spec")
                 
             else:
@@ -274,19 +274,22 @@ class DockerRuntime(ExecutionEnvironment):
         self.docker_kwargs = docker_kwargs
 
 
-        self.ip = ip
-        self.docker_host = r"tcp://" + self.ip + r":2375"
-        custom_env = {
-            'DOCKER_HOST': self.docker_host, 
-            'DOCKER_TLS_VERIFY': DOCKER_TLS_VERIFY, 
-            'DOCKER_CERT_PATH': DOCKER_CERT_PATH, 
-            # 'DOCKER_API_VERSION': '1.40' 
-        }
+        self.ip = ip or ""
+        self.docker_host = f"tcp://{self.ip}:2375" if self.ip else None
         print("=docker-ip="*20)
         print(f"connection to docker, use ip:{self.ip}, docker_host:{self.docker_host}")
         self.logger.info(f"connection to docker, use ip:{self.ip}, docker_host:{self.docker_host}")
         if self.backend == "docker":
-            self.client = docker.from_env(timeout=120,environment=custom_env)
+            if self.docker_host:
+                custom_env = {
+                    'DOCKER_HOST': self.docker_host,
+                    'DOCKER_TLS_VERIFY': DOCKER_TLS_VERIFY,
+                    'DOCKER_CERT_PATH': DOCKER_CERT_PATH,
+                    # 'DOCKER_API_VERSION': '1.40'
+                }
+                self.client = docker.from_env(timeout=120, environment=custom_env)
+            else:
+                self.client = docker.from_env(timeout=120)
         elif self.backend == "kubernetes":
             # Try in-cluster config first, fallback to kubeconfig
             try:
@@ -831,7 +834,14 @@ class DockerRuntime(ExecutionEnvironment):
 
     def setup_env_swebench(self):
         try:
-            # make the run_tests.sh executable
+            # SWE-Bench Verified must use R2E-Gym's custom image. Do not silently
+            # continue with a look-alike image that only contains /testbed.
+            _, runner_check_code = self.run("test -f /run_tests.sh")
+            if str(runner_check_code) != "0":
+                raise RuntimeError(
+                    f"Docker image {self.docker_image} is missing /run_tests.sh; "
+                    "use the original slimshetty/swebench-verified image"
+                )
             self.run("chmod +x /run_tests.sh")
 
             # # move all skip files (if present) to /root
@@ -844,33 +854,11 @@ class DockerRuntime(ExecutionEnvironment):
             # make symlink of conda env to /root/.venv
             self.run(f"ln -s /opt/miniconda3/envs/testbed /root/.venv")
 
-            # install required packages TODO: check if working
-            # self.run(
-            #     "python -m pip install tree-sitter==0.20.4 tree_sitter_languages==1.10.2"
-            # )
-            self.run("pip install chardet --trusted-host pypi-mirror.weizhipin.com -i http://pypi-mirror.weizhipin.com/bzl-aliyun-pypi/simple")
-
-            check_chardet_num_all = 3
-            for check_chardet_num in range(check_chardet_num_all):
-                result_check_chardet = self.run(
-                            "python -m pip show chardet > /dev/null 2>&1 && echo true || echo false"
-                        )
-                if "false" in result_check_chardet[0]:
-                    self.logger.info(
-                     f"Re-installing chardet"
-                )
-                    self.run("sleep 10")
-                    self.run("python -m pip install chardet")
-                else:
-                    break
-
-            # sudo apt-get install patchutils
-            # self.run("apt-get update")
-            # self.run("apt-get install -y patchutils")
         except Exception as e:
             self.logger.error(
                 f"Error setting up environment: {repr(e)} @ {self.docker_image}"
             )
+            raise
 
     def setup_env(self):
         if self.swebench_verified:

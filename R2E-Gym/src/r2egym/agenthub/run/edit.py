@@ -6,12 +6,15 @@ managing Docker image pulling, environment setup, agent execution, and result co
 """
 
 import concurrent.futures
+import ipaddress
 import json
+import os
 import threading
 import time
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
+from urllib.parse import urlparse
 
 import docker
 from datasets import load_dataset, load_from_disk
@@ -32,6 +35,8 @@ file_lock = threading.Lock()
 
 # Timeout for agent execution in seconds
 TIMEOUT_SECONDS = 1200
+SWEBENCH_VERIFIED_IMAGE_PREFIX = "slimshetty/swebench-verified:"
+SWEBENCH_TEST_RUNNER = "/run_tests.sh"
 
 ##############################################################################
 def get_docker_images(repo_name: str) -> List[str]:
@@ -50,18 +55,87 @@ def get_docker_images(repo_name: str) -> List[str]:
     return docker_image_list
 
 
-def prepull_docker_image(docker_image: str) -> bool:
+def image_contains_file(client: docker.DockerClient, docker_image: str, path: str) -> bool:
+    """Check a file in an image without starting the container."""
+    container = None
+    archive_stream = None
+    try:
+        container = client.containers.create(docker_image, command=["/bin/true"])
+        archive_stream, _ = container.get_archive(path)
+        return True
+    except docker.errors.NotFound:
+        return False
+    except Exception as exc:
+        logger.error(f"Failed to inspect {path} in Docker image {docker_image}: {exc}")
+        return False
+    finally:
+        if archive_stream is not None and hasattr(archive_stream, "close"):
+            archive_stream.close()
+        if container is not None:
+            try:
+                container.remove(force=True)
+            except Exception as exc:
+                logger.warning(
+                    f"Failed to remove validation container for {docker_image}: {exc}"
+                )
+
+
+def is_valid_swebench_verified_image(
+    client: docker.DockerClient, docker_image: str
+) -> bool:
+    """Reject look-alike images that lack R2E-Gym's required test runner."""
+    if not docker_image.startswith(SWEBENCH_VERIFIED_IMAGE_PREFIX):
+        return True
+    return image_contains_file(client, docker_image, SWEBENCH_TEST_RUNNER)
+
+
+def configure_loopback_llm_no_proxy() -> None:
+    """Keep a loopback-hosted LLM out of HTTP proxy routing."""
+    api_base = os.environ.get("OPENAI_API_BASE") or os.environ.get(
+        "OPENAI_BASE_URL"
+    )
+    if not api_base:
+        return
+
+    hostname = urlparse(api_base).hostname
+    if not hostname:
+        return
+
+    try:
+        is_loopback = ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
+        is_loopback = hostname == "localhost"
+    if not is_loopback:
+        return
+
+    required_hosts = {"localhost", "127.0.0.1", "::1", hostname}
+    for variable in ("NO_PROXY", "no_proxy"):
+        configured_hosts = {
+            item.strip()
+            for item in os.environ.get(variable, "").split(",")
+            if item.strip()
+        }
+        os.environ[variable] = ",".join(sorted(configured_hosts | required_hosts))
+    logger.info(f"Bypassing HTTP proxies for loopback LLM endpoint: {hostname}")
+
+
+def prepull_docker_image(docker_image: str, ip: str = "") -> bool:
     """
     Prepulls a single Docker image.
     
     Args:
-        docker_image: The Docker image name to pull
+        docker_image: The Docker image name to pull.
+        ip: Optional remote Docker daemon IP. When omitted, use the local
+            Docker socket configured in the environment.
         
     Returns:
         True if successful, False otherwise
     """
     try:
-        client = docker.from_env()
+        if ip:
+            client = docker.DockerClient(base_url=f"tcp://{ip}:2375", timeout=120)
+        else:
+            client = docker.from_env(timeout=120)
 
         # existing_images = client.images.list(name=docker_image.split(":")[0])
         
@@ -69,17 +143,29 @@ def prepull_docker_image(docker_image: str) -> bool:
         # Check if the image already exists locally
         try:
             client.images.get(docker_image)
-            logger.info(f"Docker image already exists locally: {docker_image}")
-            return True
+            if is_valid_swebench_verified_image(client, docker_image):
+                logger.info(f"Docker image already exists locally: {docker_image}")
+                return True
+            logger.warning(
+                f"Local image {docker_image} is not the R2E-Gym custom image: "
+                f"missing {SWEBENCH_TEST_RUNNER}. Pulling the original image."
+            )
         except docker.errors.ImageNotFound:
-            # Image doesn't exist locally, proceed to pull
-            logger.info(f"Docker image not found locally, pulling: {docker_image}")
-            client.images.pull(docker_image)
-            logger.info(f"Successfully pulled Docker image: {docker_image}")
-            return True
+            logger.info(f"Docker image not found locally: {docker_image}")
         except Exception as e:
             logger.error(f"Error checking for existing Docker image {docker_image}: {e}")
             return False
+
+        logger.info(f"Pulling Docker image: {docker_image}")
+        client.images.pull(docker_image)
+        if not is_valid_swebench_verified_image(client, docker_image):
+            logger.error(
+                f"Pulled image {docker_image} is missing {SWEBENCH_TEST_RUNNER}; "
+                "refusing to run a non-R2E-Gym image under the custom image tag."
+            )
+            return False
+        logger.info(f"Successfully pulled and validated Docker image: {docker_image}")
+        return True
     except Exception as e:
         logger.error(f"Failed to pull Docker image {docker_image}: {e}")
         return False
@@ -124,7 +210,10 @@ def prepull_docker_images(ds_selected: List[Dict], max_workers: Optional[int] = 
 
     logger.info(f"Prepull completed. Success: {len(successful_pulls)}, Failed: {len(failed_pulls)}")
     if failed_pulls:
-        logger.warning(f"Failed to pull images: {failed_pulls}")
+        raise RuntimeError(
+            "Required Docker images could not be pulled and validated: "
+            + ", ".join(sorted(failed_pulls))
+        )
 
 
 ##############################################################################
@@ -463,6 +552,7 @@ def runagent_multiple(
     max_iterations: int = 1,
     scaffold: str = "r2egym",
     prepull_images: bool = False,
+    prepull_workers: Optional[int] = 4,
     max_tokens: int = 131072,
     ip: str = "",
     used_yaml: str = "",
@@ -502,6 +592,7 @@ def runagent_multiple(
         max_iterations: Maximum number of iterations.
         scaffold: Scaffold type ("r2egym", "sweagent", "openhands").
         prepull_images: Whether to prepull Docker images in parallel.
+        prepull_workers: Maximum concurrent image pulls, independent of agent workers.
         max_tokens: Maximum token limit for the agent.
         ip: IP address of the Docker daemon.
         used_yaml: Path to custom YAML configuration file.
@@ -514,6 +605,11 @@ def runagent_multiple(
         use_single_turn_summary: Whether to use single-turn summarization.
         memory_output_path: Optional path to save memory output.
     """
+    configure_loopback_llm_no_proxy()
+
+    if prepull_workers is not None and prepull_workers < 1:
+        raise ValueError("prepull_workers must be at least 1")
+
     # Load the dataset
     if dataset.endswith(".json"):
         with open(dataset, "r") as f:
@@ -608,8 +704,13 @@ def runagent_multiple(
 
     # Prepull all Docker images in parallel before starting main execution
     if ds_selected and prepull_images:
-        logger.info("Prepulling Docker images before starting main execution...")
-        prepull_docker_images(ds_selected, max_workers=max_workers, ip=ip)
+        logger.info(
+            "Prepulling Docker images before starting main execution "
+            f"with up to {prepull_workers or 'default'} workers..."
+        )
+        prepull_docker_images(
+            ds_selected, max_workers=prepull_workers, ip=ip
+        )
         logger.info("Docker image prepull completed.")
 
     # with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:

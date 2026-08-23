@@ -38,7 +38,6 @@ from typing import Dict, List, Tuple, Optional
 import warnings
 
 import sys
-import chardet
 
 # sys.stdout.reconfigure(encoding='utf-8')
 
@@ -195,10 +194,13 @@ class StrReplaceEditor:
 
     @staticmethod
     def read_path(path: Path) -> str:
-        encoding = chardet.detect(path.read_bytes())["encoding"]
-        if encoding is None:
-            encoding = "utf-8"
-        return path.read_text(encoding=encoding)
+        data = path.read_bytes()
+        try:
+            return data.decode("utf-8")
+        except UnicodeDecodeError:
+            # The editor always writes UTF-8. Latin-1 provides a deterministic,
+            # dependency-free fallback that preserves every input byte.
+            return data.decode("latin-1")
 
     def view(
         self,
