@@ -6,7 +6,14 @@ def extract_by_docker_image_upsample(
     all_jsonl, candicate_jsonl, out_jsonl,
     limit_min_num=-1, limit_max_turn=-1
 ):
-    # Load candidate problem_statement set
+    """将干净的 SFT 成功轨迹与通过难度筛选的任务集合取交集。
+
+    `candicate_jsonl` 保存前两个 BON 脚本选出的任务级难度结果；
+    `all_jsonl` 应保存经过轨迹级过滤的干净成功 SFT conversation。因此，
+    失败 rollout 只参与任务难度判断，不会被复制进最终 SFT 数据集。
+    """
+
+    # 筛选条件 1：载入经验通过率落在目标难度区间内的任务 problem_statement。
     with open(candicate_jsonl, "r", encoding="utf-8") as f:
         wanted = {json.loads(line)["problem_statement"].strip() for line in f}
     print(len(wanted ))
@@ -18,6 +25,9 @@ def extract_by_docker_image_upsample(
             count_all+=1
             data = json.loads(line)
             ps = data["input"][2]["content"].split("</issue_description>")[0].split("<issue_description>")[-1].strip()
+            # 筛选条件 2：只有轨迹所属任务位于难度候选集合中，才保留这条干净
+            # SFT 轨迹。按完整问题文本精确匹配比较脆弱；如果两个文件都保留
+            # instance_id，使用 instance_id 匹配会更稳健。
             if ps in wanted:
                 clusters[ps].append(data)
 
@@ -33,6 +43,9 @@ def extract_by_docker_image_upsample(
         for ps, items in clusters.items():
             count = len(items)
 
+            # 筛选条件 3（可选下采样）：限制每个任务最多保留多少条轨迹。
+            # 当前按 len(input) 排序，它表示消息数量而不是 tokenizer token
+            # 长度，并优先保留消息轮次更少的 conversation。
             # =============== Limit maximum number of turns (priority processing) ==================
             if limit_max_turn > -1 and count > limit_max_turn:
                 # Sort by turns in ascending order
@@ -43,6 +56,9 @@ def extract_by_docker_image_upsample(
                 total_downsampled += deleted
                 downsample_stats[deleted] += 1
 
+            # 筛选条件 4（可选上采样）：如果某个候选任务的干净轨迹少于
+            # limit_min_num，就从已有轨迹中有放回抽样，直到达到下限。这会
+            # 改变任务权重，但不会产生新的轨迹信息。
             # ================== Upsample insufficient parts ==================
             count = len(items)
             if limit_min_num > -1 and count < limit_min_num:
@@ -80,6 +96,7 @@ extract_by_docker_image_upsample(
     all_jsonl,
     candicate_jsonl,
     out_jsonl,
+    # 负数会关闭上述两种可选数量过滤，因此默认调用只执行候选任务取交集。
     limit_min_num=-2,  
     limit_max_turn=-2
 )
