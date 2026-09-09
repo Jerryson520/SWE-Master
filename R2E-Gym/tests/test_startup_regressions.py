@@ -128,6 +128,35 @@ class StartupRegressionTests(unittest.TestCase):
         ]
         self.assertEqual(unsafe_key_reads, [])
 
+    def test_llm_output_budget_reserves_context_space(self):
+        tree = parse_source("src/r2egym/agenthub/agent/agent.py")
+        budget_function = find_function(tree, "_request_max_output_tokens")
+        budget_source = ast.unparse(budget_function)
+        model_query = find_function(tree, "model_query")
+        model_query_source = ast.unparse(model_query)
+
+        self.assertIn("max_output_tokens", budget_source)
+        self.assertIn("context_window", budget_source)
+        self.assertIn("context_safety_margin", budget_source)
+        self.assertIn(
+            "context_window - prompt_tokens - context_safety_margin",
+            budget_source,
+        )
+        self.assertIn("remaining_trajectory_tokens", model_query_source)
+        self.assertIn("self._request_max_output_tokens", model_query_source)
+        self.assertIn("max_tokens=request_max_output_tokens", model_query_source)
+
+    def test_openhands_smoke_config_uses_32k_context_budget(self):
+        config_path = (
+            PROJECT_ROOT
+            / "src/r2egym/agenthub/config/openhands/openhands_sp_non_fn_calling.yaml"
+        )
+        config = config_path.read_text()
+
+        self.assertIn("context_window: 32768", config)
+        self.assertIn("context_safety_margin: 1024", config)
+        self.assertIn("max_output_tokens: 2048", config)
+
 
 if __name__ == "__main__":
     unittest.main()
