@@ -444,126 +444,138 @@ def runagent(
     env_args = EnvArgs(ds=ds)
 
     # Initialize the RepoEnv
-    env = RepoEnv(env_args, ip=ip, logger=logger, backend=backend, use_lsp=use_lsp)
-    logger.info("has set up env")
-    # Set agent arguments
-    # Enable memory compression
-    if enable_compression:
-        if used_yaml:
-            agent_args = MemoryAgentArgs.from_yaml(
-                Path(used_yaml)
-            )
-        else:
-            if use_fn_calling:
-                assert scaffold != "sweagent", "SWEagent scaffold does not support fn calling"
-                agent_args = MemoryAgentArgs.from_yaml(
-                    Path(f"./src/r2egym/agenthub/config/{scaffold}/edit_fn_calling.yaml")
-                )
-            else:
-                if "openhands" in scaffold:
-                    agent_args = MemoryAgentArgs.from_yaml(
-                        Path(f"./src/r2egym/agenthub/config/{scaffold}/openhands_sp_non_fn_calling.yaml")
-                    )
-                else:
-                    agent_args = MemoryAgentArgs.from_yaml(
-                        Path(f"./src/r2egym/agenthub/config/{scaffold}/edit_non_fn_calling.yaml")
-                    )
-    # Normal rollout (without memory compression)
-    else:
-        if used_yaml:
-            agent_args = AgentArgs.from_yaml(
-                Path(used_yaml)
-            )
-        else:
-            if use_fn_calling:
-                assert scaffold != "sweagent", "SWEagent scaffold does not support fn calling"
-                agent_args = AgentArgs.from_yaml(
-                    Path(f"./src/r2egym/agenthub/config/{scaffold}/edit_fn_calling.yaml")
-                )
-                
-            else:
-                if "openhands" in scaffold:
-                    agent_args = AgentArgs.from_yaml(
-                        Path(f"./src/r2egym/agenthub/config/{scaffold}/openhands_sp_non_fn_calling.yaml")
-                    )
-                else:
-                    agent_args = AgentArgs.from_yaml(
-                        Path(f"./src/r2egym/agenthub/config/{scaffold}/edit_non_fn_calling.yaml")
-                    )
-
-    logger.info("before agent")  
-    agent_args.llm_name = llm_name
-    agent_args.other_args = dict(agent_args.other_args or {})
-    cli_token_config = {
-        "context_window": context_window,
-        "max_output_tokens": max_output_tokens,
-        "context_safety_margin": context_safety_margin,
-    }
-    agent_args.other_args.update(
-        {key: value for key, value in cli_token_config.items() if value is not None}
-    )
-    logger.info(
-        "Effective inference token configuration: "
-        f"context_window={agent_args.other_args.get('context_window', 32768)}, "
-        f"configured_max_output={agent_args.other_args.get('max_output_tokens', 2048)}, "
-        f"context_safety_margin={agent_args.other_args.get('context_safety_margin', 1024)}, "
-        f"max_trajectory_output_tokens={max_trajectory_output_tokens}"
-    )
-
-    # Initialize the agent
-    agent = Agent(name="EditAgent", args=agent_args, logger=logger)
-    logger.info("after agent")
-    # run agent editagent
+    env = None
     try:
-        trajectory = run_agent_with_restarts(
-            agent,
-            env,
-            max_steps=max_steps,
-            num_restarts=num_restarts,
-            temperature=temperature,
-            max_steps_absolute=max_steps_absolute,
-            use_fn_calling=use_fn_calling,
-            max_iterations=max_iterations,
-            scaffold=scaffold,
-            max_trajectory_output_tokens=max_trajectory_output_tokens,
-            use_lsp=use_lsp,
-            use_demo=use_demo,
-            enable_compression=enable_compression,     # Whether to enable memory compression
-            summary_window=summary_window,
-            keep_recent=keep_recent,                # Keep full details for the most recent 5 turns
-            compression_trigger_step=compression_trigger_step,  # Step at which compression triggers
-            use_single_turn_summary=use_single_turn_summary,
-            # Memory output path
-            memory_output_path=memory_output_path,
+        env = RepoEnv(env_args, ip=ip, logger=logger, backend=backend, use_lsp=use_lsp)
+        logger.info("has set up env")
+        # Set agent arguments
+        # Enable memory compression
+        if enable_compression:
+            if used_yaml:
+                agent_args = MemoryAgentArgs.from_yaml(
+                    Path(used_yaml)
+                )
+            else:
+                if use_fn_calling:
+                    assert scaffold != "sweagent", "SWEagent scaffold does not support fn calling"
+                    agent_args = MemoryAgentArgs.from_yaml(
+                        Path(f"./src/r2egym/agenthub/config/{scaffold}/edit_fn_calling.yaml")
+                    )
+                else:
+                    if "openhands" in scaffold:
+                        agent_args = MemoryAgentArgs.from_yaml(
+                            Path(f"./src/r2egym/agenthub/config/{scaffold}/openhands_sp_non_fn_calling.yaml")
+                        )
+                    else:
+                        agent_args = MemoryAgentArgs.from_yaml(
+                            Path(f"./src/r2egym/agenthub/config/{scaffold}/edit_non_fn_calling.yaml")
+                        )
+        # Normal rollout (without memory compression)
+        else:
+            if used_yaml:
+                agent_args = AgentArgs.from_yaml(
+                    Path(used_yaml)
+                )
+            else:
+                if use_fn_calling:
+                    assert scaffold != "sweagent", "SWEagent scaffold does not support fn calling"
+                    agent_args = AgentArgs.from_yaml(
+                        Path(f"./src/r2egym/agenthub/config/{scaffold}/edit_fn_calling.yaml")
+                    )
+
+                else:
+                    if "openhands" in scaffold:
+                        agent_args = AgentArgs.from_yaml(
+                            Path(f"./src/r2egym/agenthub/config/{scaffold}/openhands_sp_non_fn_calling.yaml")
+                        )
+                    else:
+                        agent_args = AgentArgs.from_yaml(
+                            Path(f"./src/r2egym/agenthub/config/{scaffold}/edit_non_fn_calling.yaml")
+                        )
+
+        logger.info("before agent")
+        agent_args.llm_name = llm_name
+        agent_args.other_args = dict(agent_args.other_args or {})
+        cli_token_config = {
+            "context_window": context_window,
+            "max_output_tokens": max_output_tokens,
+            "context_safety_margin": context_safety_margin,
+        }
+        agent_args.other_args.update(
+            {key: value for key, value in cli_token_config.items() if value is not None}
         )
-    except Exception as e:
-        logger.error(
-            f"Error during agent run for Docker image {ds['docker_image']}: {e}"
+        logger.info(
+            "Effective inference token configuration: "
+            f"context_window={agent_args.other_args.get('context_window', 32768)}, "
+            f"configured_max_output={agent_args.other_args.get('max_output_tokens', 2048)}, "
+            f"context_safety_margin={agent_args.other_args.get('context_safety_margin', 1024)}, "
+            f"max_trajectory_output_tokens={max_trajectory_output_tokens}"
         )
-        return None
 
-    # also get the gt outputs
-    reward_calc_time = time.time()
-    reward, test_output = env.runtime._calculate_reward(get_test_output=True, timeout=max_reward_calc_time)
-    reward_calc_time = time.time() - reward_calc_time
-    # Close the environment and runtime
-    env.close()
+        # Initialize the agent
+        agent = Agent(name="EditAgent", args=agent_args, logger=logger)
+        logger.info("after agent")
+        # run agent editagent
+        try:
+            trajectory = run_agent_with_restarts(
+                agent,
+                env,
+                max_steps=max_steps,
+                num_restarts=num_restarts,
+                temperature=temperature,
+                max_steps_absolute=max_steps_absolute,
+                use_fn_calling=use_fn_calling,
+                max_iterations=max_iterations,
+                scaffold=scaffold,
+                max_trajectory_output_tokens=max_trajectory_output_tokens,
+                use_lsp=use_lsp,
+                use_demo=use_demo,
+                enable_compression=enable_compression,     # Whether to enable memory compression
+                summary_window=summary_window,
+                keep_recent=keep_recent,                # Keep full details for the most recent 5 turns
+                compression_trigger_step=compression_trigger_step,  # Step at which compression triggers
+                use_single_turn_summary=use_single_turn_summary,
+                # Memory output path
+                memory_output_path=memory_output_path,
+            )
+        except Exception as e:
+            logger.error(
+                f"Error during agent run for Docker image {ds['docker_image']}: {e}"
+            )
+            return None
 
-    # update the trajectory object
-    trajectory.reward = reward
-    trajectory.test_output = test_output
-    trajectory.ds = ds
-    trajectory.exp_name = exp_name
-    trajectory.reward_calc_time = reward_calc_time # time taken to calculate reward
-    logger.warning(f"time taken to calculate reward in seconds: {reward_calc_time:.2f}")
+        # also get the gt outputs
+        reward_calc_time = time.time()
+        reward, test_output = env.runtime._calculate_reward(get_test_output=True, timeout=max_reward_calc_time)
+        reward_calc_time = time.time() - reward_calc_time
+        # Close the environment and runtime
 
-    logger.info(f"editagent completed for Docker image: {ds['docker_image']}")
-    # close env and docker runtime
-    logger.info(f"Closing environment for Docker image: {ds['docker_image']}")
+        # update the trajectory object
+        trajectory.reward = reward
+        trajectory.test_output = test_output
+        trajectory.ds = ds
+        trajectory.exp_name = exp_name
+        trajectory.reward_calc_time = reward_calc_time # time taken to calculate reward
+        logger.warning(f"time taken to calculate reward in seconds: {reward_calc_time:.2f}")
 
-    json_traj = trajectory.model_dump_json()
-    logger.info(f"has processed json_traj for docker image {ds['docker_image']}")
-    return json_traj
+        logger.info(f"editagent completed for Docker image: {ds['docker_image']}")
+        # close env and docker runtime
+        logger.info(f"Closing environment for Docker image: {ds['docker_image']}")
+
+        json_traj = trajectory.model_dump_json()
+        logger.info(f"has processed json_traj for docker image {ds['docker_image']}")
+        return json_traj
+    finally:
+        # 无论模型、测试或序列化是否失败，都关闭本次环境。
+        if env is not None:
+            try:
+                env.close()
+            except Exception:
+                logger.exception("Failed to close task environment")
+        # 批量串行调用时不能为每个任务留下打开的日志文件句柄。
+        for handler in list(logger.handlers):
+            handler.close()
+            logger.removeHandler(handler)
 
 
 def runagent_multiple(

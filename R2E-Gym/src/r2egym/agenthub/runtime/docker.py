@@ -304,18 +304,24 @@ class DockerRuntime(ExecutionEnvironment):
         if self.backend == "kubernetes":
             # Generate a random UUID and truncate to 30 characters
             self.container_name = str(uuid.uuid4())
-        self.start_container(
-            self.docker_image, command, self.container_name, **docker_kwargs
-        )
+        try:
+            self.start_container(
+                self.docker_image, command, self.container_name, **docker_kwargs
+            )
 
-        # Initialize the environment
-        self.setup_env()
+            # Initialize the environment
+            self.setup_env()
 
-        if self.use_lsp:
-            if self.swebench_verified or self.swesmith  or self.swegym or self.swerebench:
-                self.setup_lsp()
-            else:
-                self.uv_setup_lsp()
+            if self.use_lsp:
+                if self.swebench_verified or self.swesmith  or self.swegym or self.swerebench:
+                    self.setup_lsp()
+                else:
+                    self.uv_setup_lsp()
+
+        except BaseException:
+            # 构造失败时调用方还没有拿到 runtime，必须在这里清理。
+            self.close()
+            raise
 
         if self.backend == "kubernetes":
             self.logger.info("Kubernetes environment initialized")
@@ -342,13 +348,9 @@ class DockerRuntime(ExecutionEnvironment):
     @staticmethod
     def _get_container_name(image_name: str) -> str:
         """Return name of container"""
-        process_id = str(os.getpid())
-        current_time = str(datetime.datetime.now())
-        unique_string = current_time + process_id
-        hash_object = hashlib.sha256(unique_string.encode())
         image_name_sanitized = image_name.replace("/", "-")
         image_name_sanitized = image_name_sanitized.replace(":", "-")
-        return f"{image_name_sanitized}-{hash_object.hexdigest()[:10]}"
+        return f"{image_name_sanitized[:100]}-{uuid.uuid4().hex}"
 
     def _start_kubernetes_pod(
         self, docker_image: str, command: str, pod_name: str, **docker_kwargs
@@ -508,35 +510,21 @@ class DockerRuntime(ExecutionEnvironment):
     def start_container(
         self, docker_image: str, command: str, ctr_name: str, **docker_kwargs
     ):
-        # Start or reuse a container
+        # 每次创建独立容器，不复用历史轨迹状态。
         try:
             self.logger.info("begin initialing starting container")
             if self.backend == "docker":
-                containers = self.client.containers.list(
-                    all=True, filters={"name": ctr_name}
+                # 不通过名称查找并接管旧容器，每次 rollout 都从镜像创建。
+                self.container = self.client.containers.run(
+                    docker_image,
+                    command=command,
+                    name=ctr_name,
+                    detach=True,
+                    tty=True,
+                    stdin_open=True,
+                    network_mode='host',
+                    **docker_kwargs,
                 )
-                if containers:
-                    print("has containers, use this container")
-                    self.logger.info("has container, use this container")
-                    self.container = containers[0]
-                    if self.container.status != "running":
-                        self.container.start()
-                else:
-                    print("no containers, start container")
-                    self.logger.info("no containers, start container")
-                    self.container = self.client.containers.run(
-                        docker_image,
-                        command=command,
-                        name=ctr_name,
-                        detach=True,
-                        tty=True,
-                        stdin_open=True,
-                        network_mode='host',
-                        # environment={"PATH": "/commands"},
-                        **docker_kwargs,
-                    )
-                    print(f"this is the_started_container:{self.container}")
-                    self.logger.info(f"this is the_started_container:{self.container}")
             elif self.backend == "kubernetes":
                 self._start_kubernetes_pod(
                     docker_image, command, ctr_name, **docker_kwargs
@@ -545,9 +533,9 @@ class DockerRuntime(ExecutionEnvironment):
             self.logger.info("has finished initialied starting container")
 
         except Exception as e:
-            self.logger.error("Container start error:", repr(e))
+            self.logger.error("Container start error: %r", e)
             self.stop_container()
-            return
+            raise
 
     def _stop_kubernetes_pod(self):
         try:
