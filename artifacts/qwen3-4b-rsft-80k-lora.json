@@ -12,15 +12,19 @@
   "files": [
     {
       "path": "adapter/adapter_model.safetensors",
-      "sha256": "372e14114b5e971332845dcc26c7fba0c3ae41c9386e564ee637147fca982d65"
+      "sha256": "372e14114b5e971332845dcc26c7fba0c3ae41c9386e564ee637147fca982d65",
+      "availability": "uploading"
     },
     {
       "path": "checkpoints/latest-resumable/global_step40/mp_rank_00_model_states.pt",
-      "sha256": "a8d89db23bfcd3cf84e2fcce2ece5610b8fbd3676dc4c5c1fa124a0d3eba524d"
+      "sha256": "a8d89db23bfcd3cf84e2fcce2ece5610b8fbd3676dc4c5c1fa124a0d3eba524d",
+      "availability": "local-only",
+      "location_reference": "model-service-A800 inventory dated 2026-10-02"
     },
     {
       "path": "checkpoints/latest-resumable/global_step40/metric.json",
-      "sha256": "bc9d0b429dbde6b6ef13e680a36effb70e183e33d347b13707ba22aee8d988a4"
+      "sha256": "bc9d0b429dbde6b6ef13e680a36effb70e183e33d347b13707ba22aee8d988a4",
+      "availability": "local-only"
     }
   ],
   "created_at": "2026-10-02T10:12:00+08:00"
