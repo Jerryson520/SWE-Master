@@ -6,7 +6,7 @@ JSONL training data, model weights, checkpoints, and runtime logs do not.
 The private artifact repositories are:
 
 - Dataset: `JJerry0000/swe-master-teacher-rollout-300x3`
-- Model: `JJerry0000/swe-master-qwen3-4b-rsft-80k-lora`
+- Model: `JJerry0000/Qwen3-4B-SWE-RSFT-80K`
 
 The authoritative paths, revisions, checksums, and record counts are recorded in
 `artifacts/*.json`. Always pin a revision for reproducible runs and verify the
