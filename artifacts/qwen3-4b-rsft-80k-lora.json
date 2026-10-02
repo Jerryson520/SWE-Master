@@ -3,17 +3,18 @@
   "artifact_id": "qwen3-4b-rsft-80k-lora",
   "artifact_type": "model",
   "hf_repo": "JJerry0000/swe-master-qwen3-4b-rsft-80k-lora",
-  "revision": "main",
+  "revision": "qwen3-4b-rsft-80k-lora-v1",
   "private": true,
   "source_code_commit": "157c845424ce100711bef85ba833ee489efff51a",
   "base_model": "Qwen3-4B-Instruct-2507",
   "openrlhf_commit": "46f8c119a1ec4cb885196f85b8243bd70eee953b",
   "inventory_sha256": "0556be4beeac86aa30221363af98e0a01808a2500bd2c9119b154fda0b4c8cf4",
+  "remote_commit": "d70df5391bb9b052c2f94ee3febbf04a116d1ce5",
   "files": [
     {
       "path": "adapter/adapter_model.safetensors",
       "sha256": "372e14114b5e971332845dcc26c7fba0c3ae41c9386e564ee637147fca982d65",
-      "availability": "uploading"
+      "availability": "remote-verified"
     },
     {
       "path": "checkpoints/latest-resumable/global_step40/mp_rank_00_model_states.pt",
