@@ -1,0 +1,4 @@
+[submodule "OpenRLHF_SFT/OpenRLHF"]
+	path = OpenRLHF_SFT/OpenRLHF
+	url = git@github.com:Jerryson520/OpenRLHF.git
+	branch = swe-master/pretokenized-multiturn

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>SWE-Master Evaluation Browser</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header><div><p class="eyebrow">SWE-MASTER / EVALUATION</p><h1>轨迹实验浏览器</h1></div><div id="status">读取中…</div></header>
+  <main>
+    <section id="dashboard">
+      <div id="cards" class="cards"></div>
+      <div class="toolbar">
+        <input id="search" type="search" placeholder="搜索 instance id、repo 或 problem statement">
+        <select id="category"><option value="all">全部结果</option><option value="both_success">都成功</option><option value="rl_gained">仅 RL 成功</option><option value="sft_only">仅 SFT 成功</option><option value="both_failed">都失败</option></select>
+        <select id="sort"><option value="instance">按任务名</option><option value="category">按结果类型</option><option value="steps">按最大步数</option><option value="tokens">按最大 completion tokens</option></select>
+      </div>
+      <div class="table-wrap"><table><thead><tr><th>任务</th><th>结果</th><th>SFT</th><th>RL</th><th>Problem preview</th></tr></thead><tbody id="taskRows"></tbody></table></div>
+    </section>
+    <section id="detail" hidden>
+      <button id="back" class="back">← 返回任务列表</button>
+      <div class="detail-head"><div><p class="eyebrow" id="taskRepo"></p><h2 id="taskTitle"></h2></div><span id="taskCategory" class="badge"></span></div>
+      <details open><summary>Problem statement</summary><pre id="problem"></pre></details>
+      <div id="runMetrics" class="run-metrics"></div>
+      <nav class="tabs"><button data-tab="trajectory" class="active">Trajectory</button><button data-tab="patch">Patch</button><button data-tab="tests">Tests</button><button data-tab="raw">Raw JSON</button></nav>
+      <div id="tabContent"></div>
+    </section>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>

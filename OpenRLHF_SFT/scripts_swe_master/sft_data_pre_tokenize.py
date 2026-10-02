@@ -2,6 +2,7 @@ from typing import Callable
 
 import torch
 from torch.utils.data import Dataset
+from pathlib import Path
 
 # from openrlhf.utils.utils import zero_pad_sequences
 
@@ -71,7 +72,7 @@ class SFTDataset(Dataset):
 
         print(f"tokenizer path: {tokenizer_path}")
         tokenzier_name = tokenizer_path.split("/")[-1]
-        file_name = data_file.split("/")[-1].strip("jsonl")
+        file_name = Path(data_file).stem
         out_file = f"./OpenRLHF_SFT/SFT_data_pre_process/{file_name}_processed_{tokenzier_name}.jsonl"
         print(f"out_file path: {out_file}")
 
@@ -278,11 +279,11 @@ if __name__ == "__main__":
     from transformers import AutoTokenizer
     from datasets import Dataset
 
-    data_file = "./OpenRLHF_SFT/scripts_swe_master/sft_data_demo.jsonl"
+    data_file = "data_examples/sft_data/glm46_0_used_swe_rebench_1_filtered.jsonl"
     train_data = blending_datasets(data_file)
     print(train_data)
 
-    tokenizer_path ="./models/Qwen2.5-Coder-32B-Instruct"
+    tokenizer_path ="Qwen/Qwen3-4B-Instruct-2507"
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
     class Args:
         input_key = "input"

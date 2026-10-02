@@ -105,10 +105,10 @@ def process_single_jsonl(jsonl_f):
             token_usage_total =trajectory_steps[-1]["token_usage_total"]
             sp_1 = agent_args["system_prompt"]
             sp_2 = agent_args["instance_prompt"]
-            
+
             sp_2 = sp_2.replace("{problem_statement}",problem_statement).replace("{working_dir}","/testbed")
-            
-            
+
+
             messages.append({"role":"system","content":sp_1})
             messages.append({"role":"system","content":FC_SP})
             messages.append({"role":"user","content":sp_2})
@@ -151,7 +151,7 @@ def process_folders_to_jsonl(folder_list, output_jsonl):
         for name in os.listdir(folder):
             if name.endswith(".jsonl"):
                 full_path = os.path.join(folder, name)
-                
+
                 if "verified" in full_path and "smith" not in full_path:
                     print(f"Skipping test set file: {full_path}")
                     print(f"=="*50)
@@ -168,7 +168,7 @@ def process_folders_to_jsonl(folder_list, output_jsonl):
 def save_messages_to_jsonl(messages_all, output_jsonl):
     """Write messages_all into a jsonl file."""
     if not output_jsonl:
-        return 
+        return
     else:
         with open(output_jsonl, "w") as f:
             for msgs in messages_all:
@@ -181,9 +181,9 @@ def save_messages_to_jsonl(messages_all, output_jsonl):
                 # "file_idx":msgs[3]
                 "reward": msgs[-1]
                 }
-                
+
                 f.write(json.dumps(obj, ensure_ascii=False) + "\n")
-            
+
 
 def find_subfolders_with_str(folder_path: str, keyword: str):
     result = []
@@ -194,23 +194,20 @@ def find_subfolders_with_str(folder_path: str, keyword: str):
     return result
 
 if __name__ == "__main__":
-    
-    
+    folder_list = add_list = ["data_examples/r2e-gym-inference-traj"]# ["./R2E-Gym/results/1214_0.0001_0.4", "./R2E-Gym/results/1214_0.4_0.6"]
 
-    folder_list = add_list = ["./R2E-Gym/results/1214_0.0001_0.4", "./R2E-Gym/results/1214_0.4_0.6"]
-    
 
-    print("The following data is banned, please verify carefully:") 
-    for f in rm_list:
-        print(f)
-    print("=="*50)
-    
-    print("The following data is ready to be processed, please verify carefully:")   
+    # print("The following data is banned, please verify carefully:")
+    # for f in rm_list:
+    #     print(f)
+    # print("=="*50)
+
+    print("The following data is ready to be processed, please verify carefully:")
     for f in folder_list:
         print(f)
-    
+
     print("=="*50)
     print(f'Total number of files to be processed: {len(folder_list)}')
 
-    output_jsonl ="./R2E-Gym/results/swe_all_w_sp_obs.jsonl"
+    output_jsonl = "./data_examples/sft_data/glm46_0_used_swe_rebench_1_demo.jsonl" # "./R2E-Gym/results/swe_all_w_sp_obs.jsonl"
     process_folders_to_jsonl(folder_list, output_jsonl)

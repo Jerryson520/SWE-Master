@@ -4,13 +4,21 @@ import json
 from collections import defaultdict
 
 def process_folders_bon(folder_list, output_dir):
+    """将同一任务的多次原始 rollout 聚合为任务级难度统计。
+
+    本阶段不选择具体的 SFT 示范。成功和失败 rollout 都要保留，因为需要用
+    它们的 reward 估计当前策略解决同一任务的频率；后续脚本再将
+    reward_mean 作为经验难度代理。
+    """
     os.makedirs(output_dir, exist_ok=True)
 
     # Output file paths
     bon_output = os.path.join(output_dir, "bon_stats.jsonl")
     acc_stat_output = os.path.join(output_dir, "overall_acc_stats.jsonl")
 
-    # key: docker_image -> reward list
+    # 聚合条件：同一任务的重复 rollout 必须使用相同的分组键。虽然变量仍叫
+    # docker_stats，但当前代码实际用完整 problem_statement 文本作为键，
+    # 并不是用 docker_image。更规范的实现通常应使用稳定的 ds.instance_id。
     docker_stats = defaultdict(list)
 
     # Iterate through folders
@@ -33,12 +41,17 @@ def process_folders_bon(folder_list, output_dir):
                     data = json.loads(line)
                     # print(data["ds"].keys())
                     # exit()
+                    # 输入合法性条件：每条原始 rollout 都应包含环境标识和
+                    # verifier reward。这里的 kill 是上游调试残留，实际会触发
+                    # NameError；生产代码更适合显式抛出 ValueError。
                     # Do not use .get()
                     if "docker_image" not in data:
                         kill
                     if "reward" not in data:
                         kill
 
+                    # 任务分组键：problem_statement 完全相同的重复运行会被聚合
+                    # 到同一个 reward_list 中。
                     # docker_img = data["docker_image"]
                     docker_img = data["problem_statement"]
                     # print(data["ds"].keys())
@@ -67,6 +80,10 @@ def process_folders_bon(folder_list, output_dir):
             reward_list = [r for r, _, _ in reward_info]
             problem_statement = reward_info[0][1]  # One-to-one mapping with docker_image
             instance_id = reward_info[0][2]
+            # 该任务的经验单次通过率：
+            #   reward_mean = 成功 rollout 数 / rollout 总数。
+            # 它被用作难度代理，但不是数学意义上的 Pass@N，也不是
+            # “N 次中至少一次成功”的指标。
             reward_mean = sum(reward_list) / len(reward_list)
             # print(reward_list)
             entry = {
@@ -79,6 +96,9 @@ def process_folders_bon(folder_list, output_dir):
             }
             out.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
+    # 统计每个经验通过率档位有多少任务。若每题运行 5 次，典型档位是
+    # 0.0、0.2、……、1.0；若每题只运行 1 次，则只能出现 0.0 和 1.0，
+    # 无法形成有意义的中间难度区间。
     # ========== Calculate overall acc -> sample count statistics ==========
 
     acc_count = {}  # key: mean acc, value: number of docker_image

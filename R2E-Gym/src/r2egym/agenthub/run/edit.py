@@ -19,6 +19,7 @@ from urllib.parse import urlparse
 import docker
 from datasets import load_dataset, load_from_disk
 from fire import Fire
+from tqdm.auto import tqdm
 
 from r2egym.agenthub.agent.agent import Agent, AgentArgs, MemoryAgentArgs
 from r2egym.agenthub.environment.env import EnvArgs, RepoEnv
@@ -196,7 +197,13 @@ def prepull_docker_images(ds_selected: List[Dict], max_workers: Optional[int] = 
         successful_pulls = []
         failed_pulls = []
 
-        for future in concurrent.futures.as_completed(future_to_image):
+        completed_futures = concurrent.futures.as_completed(future_to_image)
+        for future in tqdm(
+            completed_futures,
+            total=len(future_to_image),
+            desc="Pulling Docker images",
+            unit="image",
+        ):
             docker_image = future_to_image[future]
             try:
                 success = future.result()

@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "artifact_id": "teacher-deepseek-flash-official-300x3-rsft-qwen3-80k",
+  "artifact_type": "dataset",
+  "hf_repo": "JJerry0000/swe-master-teacher-rollout-300x3",
+  "revision": "main",
+  "private": true,
+  "source_code_commit": "157c845424ce100711bef85ba833ee489efff51a",
+  "inventory_sha256": "5ea6d365dedb9b12143359431cbe802b1e80f1758887e320e898e36a71884f72",
+  "files": [
+    {
+      "path": "processed/teacher-deepseek-flash-official-300x3-rsft/qwen3-80k/train_qwen3_80k.jsonl",
+      "sha256": "59c20994a5f7b5a8d017439f7501f8ba90e067215d8e8751ec93e2f300b65c11",
+      "record_count": 775
+    },
+    {
+      "path": "processed/teacher-deepseek-flash-official-300x3-rsft/qwen3-80k/clean_success_80k_qwen3.jsonl",
+      "sha256": "ad29c93efd232e376a974c9e52ee55558cb8e661f524275580cc92ac409b54ba",
+      "record_count": 775
+    },
+    {
+      "path": "processed/teacher-deepseek-flash-official-300x3-rsft/clean_success_all.jsonl",
+      "sha256": "bbae94d21074e2e61eff5ab7098f21d851984a528a2a0c8feef19e3e024889e8",
+      "record_count": 776
+    }
+  ],
+  "created_at": "2026-10-02T10:11:00+08:00",
+  "notes": "The 80k suffix denotes the Qwen3 80k-token context configuration, not 80,000 records."
+}
