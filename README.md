@@ -27,6 +27,16 @@
 
 **SWE-Master** is an end-to-end, open-source post-training pipeline for software engineering (SWE) agents.   It covers **trajectory synthesis & curation**, **long-horizon supervised fine-tuning (SFT)**, **reinforcement learning with execution feedback (RLVR)**, and **test-time scaling (TTS)** via simulated verification and ranking. Furthermore, the framework supports advanced tool-use capabilities, including **LSP-integrated tools** (based on the Language Server Protocol), and incorporates a summary-based context manager for efficient state tracking.
 
+Clone with the pinned OpenRLHF dependency:
+
+```bash
+git clone --recurse-submodules https://github.com/Jerryson520/SWE-Master.git
+```
+
+Experiment datasets, adapters, and checkpoints are stored outside Git. See
+[`docs/ARTIFACT_STORAGE.md`](docs/ARTIFACT_STORAGE.md) and the versioned
+manifests under [`artifacts/`](artifacts/).
+
 
 # 🤖 Models
 You can find all the trained models [**Here**](https://huggingface.co/collections/RUC-AIBOX/swe-agent-series), including:
@@ -368,4 +378,3 @@ This project is released under the [MIT License](LICENSE).
 # 📞 Contact
 
 For any questions or feedback, please reach out to us at [songhuatong123@ruc.edu.cn](songhuatong123@ruc.edu.cn).
-

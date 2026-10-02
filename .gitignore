@@ -1,0 +1,28 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+
+# Runtime output
+logs/
+run_logs/
+results/
+outputs/
+checkpoints/
+tensorboard/
+*.bak
+
+# Large datasets and model artifacts live in private Hugging Face repositories.
+*.jsonl
+*.safetensors
+*.pt
+*.pth
+*.ckpt
+
+# Local credentials and environment overrides
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+

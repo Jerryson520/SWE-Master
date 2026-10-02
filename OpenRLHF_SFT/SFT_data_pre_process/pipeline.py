@@ -1,5 +1,15 @@
+from __future__ import annotations
+
+import argparse
+import hashlib
 import json
-from collections import Counter
+import os
+import re
+import tempfile
+from collections import Counter, defaultdict
+from pathlib import Path
+
+from tqdm.auto import tqdm
 
 FC_SP = '''## Function Definition
 - You have access to the following functions:
@@ -81,13 +91,107 @@ FC_HINT = (
     "You forgot to use a function call in your response. "
 )
 
-DEFAULT_STEP_LIMITS = {100, 120, 150}
+DEFAULT_MAX_STEPS = 100
 DEFAULT_MAX_TOKEN_USAGE = 81920
+
+NATURAL_EXIT_REASON = "agent"
+
+ALLOWED_TOOLS = {"execute_bash", "str_replace_editor", "submit"}
+ALLOWED_EDITOR_COMMANDS = {"view", "create", "str_replace", "insert"}
+
+FUNCTION_PATTERN = re.compile(
+    r"<function=([^>\n]+)>\s*(.*?)\s*</function>", re.DOTALL
+)
+PARAMETER_PATTERN = re.compile(
+    r"<parameter=([^>\n]+)>(.*?)</parameter>", re.DOTALL
+)
 
 VALID_EMPTY_SUBMIT_FORMS = (
     "<function=submit>\n</function>",
     "<function=submit></function>",
 )
+
+
+def _parse_action(action: object) -> tuple[str | None, dict[str, str], list[str]]:
+    """解析一条 XML 风格 action，并返回工具名、参数和格式错误。"""
+    if not isinstance(action, str):
+        return None, {}, ["action_not_string"]
+
+    matches = list(FUNCTION_PATTERN.finditer(action))
+    if not matches:
+        if "<function=" in action or "</function>" in action:
+            return None, {}, ["malformed_tool_call"]
+        return None, {}, ["missing_tool_call"]
+    if len(matches) != 1:
+        return None, {}, ["multiple_tool_calls"]
+
+    match = matches[0]
+    if action[:match.start()].strip() or action[match.end():].strip():
+        return None, {}, ["content_outside_tool_call"]
+
+    tool_name = match.group(1).strip()
+    body = match.group(2)
+    parameter_matches = list(PARAMETER_PATTERN.finditer(body))
+    remaining = PARAMETER_PATTERN.sub("", body)
+    reasons: list[str] = []
+    if remaining.strip():
+        reasons.append("malformed_tool_parameters")
+
+    parameters: dict[str, str] = {}
+    for parameter in parameter_matches:
+        name = parameter.group(1).strip()
+        if not name or name in parameters:
+            reasons.append("duplicate_or_empty_parameter")
+            continue
+        parameters[name] = parameter.group(2)
+
+    return tool_name, parameters, reasons
+
+
+def validate_trajectory_steps(trajectory_steps: object) -> list[str]:
+    """严格检查整条轨迹中每一步的工具名、调用数量和必要参数。"""
+    if not isinstance(trajectory_steps, list):
+        return ["trajectory_steps_not_list"]
+    if not trajectory_steps:
+        return ["empty_trajectory"]
+
+    reasons: set[str] = set()
+    for step in trajectory_steps:
+        if not isinstance(step, dict):
+            reasons.add("step_not_object")
+            continue
+
+        tool_name, parameters, action_reasons = _parse_action(step.get("action"))
+        reasons.update(action_reasons)
+        if tool_name is None:
+            continue
+        if tool_name not in ALLOWED_TOOLS:
+            reasons.add(f"unknown_tool:{tool_name}")
+            continue
+
+        if tool_name == "execute_bash":
+            # command 可以是空字符串；框架用它轮询仍在运行的上一条命令。
+            if "command" not in parameters:
+                reasons.add("execute_bash_missing_command")
+        elif tool_name == "str_replace_editor":
+            command = parameters.get("command")
+            if command not in ALLOWED_EDITOR_COMMANDS:
+                reasons.add("invalid_editor_command")
+            if not parameters.get("path", "").strip():
+                reasons.add("editor_missing_path")
+            if command == "create" and "file_text" not in parameters:
+                reasons.add("create_missing_file_text")
+            if command == "str_replace" and "old_str" not in parameters:
+                reasons.add("str_replace_missing_old_str")
+            if command == "insert":
+                if "insert_line" not in parameters:
+                    reasons.add("insert_missing_line")
+                if "new_str" not in parameters:
+                    reasons.add("insert_missing_new_str")
+        elif parameters:
+            reasons.add("submit_with_parameters")
+
+    return sorted(reasons)
 
 def convert_record(raw: dict) -> dict:
     """
@@ -98,7 +202,11 @@ def convert_record(raw: dict) -> dict:
     trajectory_steps = raw.get("trajectory_steps")
     agent_args = raw["agent_args"]
     ds = raw.get("ds")
+    if not isinstance(ds, dict):
+        raise TypeError("ds must be an object")
     instance_id = ds.get("instance_id")
+    if not isinstance(instance_id, str) or not instance_id:
+        raise ValueError("instance_id is missing")
     docker_image = raw.get("docker_image")
 
     instance_prompt = agent_args["instance_prompt"]
@@ -139,6 +247,8 @@ def convert_record(raw: dict) -> dict:
         "step_count": step_count,
         "token_usage_total": token_usage_total,
         "reward": reward,
+        "exit_reason": raw.get("exit_reason"),
+        "exp_name": raw.get("exp_name"),
     }
 
 def filter_sample(sample: dict) -> tuple[dict | None, list[str]]:
@@ -163,18 +273,8 @@ def filter_sample(sample: dict) -> tuple[dict | None, list[str]]:
     ):
         return None, ["invalid_message"]
 
-    # 复制消息，下面的脏数据修复不会修改调用方传入的原始 sample。
+    # 复制消息，避免筛选过程修改调用方传入的原始 sample。
     inputs = [message.copy() for message in raw_inputs]
-
-    # 修复官方数据中一种已知的空函数名终止 action。修复后丢弃它后面的
-    # 多余一轮消息，让该 action 与紧随其后的 tool observation 成为结尾。
-    if len(inputs) >= 4:
-        compact_content = "".join(inputs[-4]["content"].split())
-        if "<function=></function>" in compact_content:
-            inputs[-4]["content"] = inputs[-4]["content"].replace(
-                "<function=>", "<function=submit>"
-            )
-            inputs = inputs[:-2]
 
     # 条件 1：只保留成功轨迹，失败轨迹不能作为正向 SFT 示范。
     if sample.get("reward") != 1:
@@ -188,18 +288,27 @@ def filter_sample(sample: dict) -> tuple[dict | None, list[str]]:
     if FC_HINT in all_content_before_final_tool:
         reasons.append("contains_function_call_hint")
 
-    # 条件 3：恰好在历史最大步数结束通常表示轨迹被预算强制截断。
-    if sample.get("step_count") in DEFAULT_STEP_LIMITS:
-        reasons.append("hit_step_limit")
+    # 条件 3：只保留自然调用 submit 结束的轨迹。预算、上下文、超时或模型
+    # 请求异常导致的终止即使最终 reward == 1，也不是干净的行为克隆示范。
+    if sample.get("exit_reason") != NATURAL_EXIT_REASON:
+        reasons.append("non_natural_exit")
 
-    # 条件 4：排除累计 token 使用量达到历史 80K 上限的轨迹。
+    # 条件 4：SWE-Master 论文为降低长尾样本带来的 OOM 风险，只保留不超过
+    # 100 turns 的成功轨迹。自然在第 100 步 submit 可以保留。
+    step_count = sample.get("step_count")
+    if not isinstance(step_count, int):
+        reasons.append("invalid_step_count")
+    elif step_count > DEFAULT_MAX_STEPS:
+        reasons.append("too_many_steps")
+
+    # 条件 5：teacher token_usage_total 是最后一步模型请求的上下文估算值，
+    # 用于审计是否接近采集预算，但不等同于 Qwen3 chat template 展开后的
+    # 实际训练长度。最终 80K 判断必须在训练机上用 Qwen3 tokenizer 重算。
     token_usage_total = sample.get("token_usage_total")
     if not isinstance(token_usage_total, (int, float)):
         reasons.append("invalid_token_usage_total")
-    elif token_usage_total >= DEFAULT_MAX_TOKEN_USAGE:
-        reasons.append("hit_token_usage_limit")
 
-    # 条件 5：最后两条必须是 assistant action + tool observation。
+    # 条件 6：最后两条必须是 assistant action + tool observation。
     final_assistant = inputs[-2]
     final_tool = inputs[-1]
     if final_assistant["role"] != "assistant":
@@ -207,7 +316,7 @@ def filter_sample(sample: dict) -> tuple[dict | None, list[str]]:
     if final_tool["role"] != "tool":
         reasons.append("final_role_not_tool")
 
-    # 条件 6：最终 assistant action 必须调用无参数 submit。
+    # 条件 7：最终 assistant action 必须调用无参数 submit。
     final_content = final_assistant["content"]
     if "<function=submit>" not in final_content:
         reasons.append("final_action_not_submit")
@@ -225,57 +334,244 @@ def filter_sample(sample: dict) -> tuple[dict | None, list[str]]:
     filtered["input"] = inputs[:-1]
     return filtered, []
 
-def run_pipeline(input_path: str, output_path: str):
+def trajectory_fingerprint(raw: dict) -> str:
+    """生成与批次位置无关的稳定指纹，用于去掉恢复/合并产生的重复轨迹。"""
+    payload = {
+        "instance_id": raw.get("ds", {}).get("instance_id")
+        if isinstance(raw.get("ds"), dict) else None,
+        "trajectory_steps": raw.get("trajectory_steps"),
+        "output_patch": raw.get("output_patch"),
+    }
+    encoded = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _atomic_json(path: Path, value: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, pending = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fout:
+            json.dump(value, fout, ensure_ascii=False, indent=2, sort_keys=True)
+            fout.write("\n")
+            fout.flush()
+            os.fsync(fout.fileno())
+        os.replace(pending, path)
+    finally:
+        if os.path.exists(pending):
+            os.unlink(pending)
+
+
+def _pending_jsonl(path: Path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, pending = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    return os.fdopen(fd, "w", encoding="utf-8"), Path(pending)
+
+
+def _count_lines(path: Path) -> int:
+    with path.open("r", encoding="utf-8") as fin:
+        return sum(1 for _ in fin)
+
+
+def run_pipeline(input_dir: str, output_dir: str, strategy: str = "rsft"):
+    input_dir = Path(input_dir)
+    if not input_dir.is_dir():
+        raise NotADirectoryError(f"输入路径不是目录: {input_dir}")
+    if strategy != "rsft":
+        raise ValueError(f"暂不支持的筛选策略: {strategy}")
+
+    batch_files = sorted(input_dir.glob("batch-*.jsonl"))
+    if not batch_files:
+        raise FileNotFoundError(
+            f"输入目录中没有 batch-*.jsonl: {input_dir}"
+        )
+
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    clean_path = output_dir / "clean_success_all.jsonl"
+    rejected_path = output_dir / "rejected.jsonl"
+    report_path = output_dir / "report.json"
+    clean_file, clean_pending = _pending_jsonl(clean_path)
+    rejected_file, rejected_pending = _pending_jsonl(rejected_path)
+
     stats = Counter()
-    with open(input_path, "r", encoding="utf-8") as fin, \
-        open(output_path, "w", encoding="utf-8") as fout:
+    repository_counts = Counter()
+    kept_repository_counts = Counter()
+    kept_per_task = Counter()
+    step_histogram = Counter()
+    teacher_context_histogram = Counter()
+    seen_fingerprints: set[str] = set()
+    total_lines = sum(_count_lines(batch_file) for batch_file in batch_files)
+    progress = tqdm(total=total_lines, desc="RSFT filter", unit="traj")
 
-        for line_number, line in enumerate(fin, start=1):
-            stats["total"] += 1
+    def reject(raw: object, source_file: Path, line_number: int,
+               reasons: list[str]) -> None:
+        reasons = list(dict.fromkeys(reasons))
+        stats["rejected"] += 1
+        for reason in reasons:
+            stats[f"reason:{reason}"] += 1
+        raw_dict = raw if isinstance(raw, dict) else {}
+        ds = raw_dict.get("ds") if isinstance(raw_dict.get("ds"), dict) else {}
+        record = {
+            "source_file": source_file.name,
+            "source_line": line_number,
+            "instance_id": ds.get("instance_id"),
+            "exp_name": raw_dict.get("exp_name"),
+            "reward": raw_dict.get("reward"),
+            "exit_reason": raw_dict.get("exit_reason"),
+            "step_count": (
+                raw_dict.get("trajectory_steps", [{}])[-1].get("step_count")
+                if isinstance(raw_dict.get("trajectory_steps"), list)
+                and raw_dict.get("trajectory_steps")
+                and isinstance(raw_dict["trajectory_steps"][-1], dict)
+                else None
+            ),
+            "reasons": reasons,
+        }
+        rejected_file.write(json.dumps(record, ensure_ascii=False) + "\n")
 
-            if not line.strip():
-                stats["empty_line"] += 1
-                continue
+    try:
+        for batch_file in batch_files:
+            with batch_file.open("r", encoding="utf-8") as fin:
+                for line_number, line in enumerate(fin, start=1):
+                    stats["total"] += 1
+                    progress.update(1)
+                    if stats["total"] % 25 == 0 or stats["total"] == total_lines:
+                        progress.set_postfix(
+                            kept=stats["kept"], rejected=stats["rejected"]
+                        )
 
-            try:
-                raw = json.loads(line)
-            except json.JSONDecodeError:
-                stats["invalid_json"] += 1
-                continue
+                    if not line.strip():
+                        reject({}, batch_file, line_number, ["empty_line"])
+                        continue
 
-            trajectory_steps = raw["trajectory_steps"]
-            if not isinstance(trajectory_steps, list):
-                stats["trajectory_steps_not_list"] += 1
-                continue
+                    try:
+                        raw = json.loads(line)
+                    except json.JSONDecodeError:
+                        reject({}, batch_file, line_number, ["invalid_json"])
+                        continue
 
-            if not trajectory_steps:
-                stats["empty_trajectories"] += 1
-                continue
+                    if not isinstance(raw, dict):
+                        reject(raw, batch_file, line_number, ["record_not_object"])
+                        continue
 
-            try:
-                converted = convert_record(raw)
-            except (KeyError, TypeError) as exc:
-                stats[f"convert_error:{type(exc).__name__}"] += 1
-                continue
+                    ds = raw.get("ds") if isinstance(raw.get("ds"), dict) else {}
+                    repo_name = ds.get("repo_name") or ds.get("repo")
+                    if isinstance(repo_name, str) and repo_name:
+                        repository_counts[repo_name] += 1
 
-            stats["converted"] += 1
+                    fingerprint = trajectory_fingerprint(raw)
+                    if fingerprint in seen_fingerprints:
+                        reject(raw, batch_file, line_number,
+                               ["duplicate_trajectory"])
+                        continue
+                    seen_fingerprints.add(fingerprint)
 
-            filtered, reasons = filter_sample(converted)
+                    trajectory_steps = raw.get("trajectory_steps")
+                    if not isinstance(trajectory_steps, list):
+                        reject(raw, batch_file, line_number,
+                               ["trajectory_steps_not_list"])
+                        continue
 
-            if filtered is None:
-                stats["rejected"] += 1
+                    if not trajectory_steps:
+                        reject(raw, batch_file, line_number, ["empty_trajectory"])
+                        continue
 
-                for reason in reasons:
-                    stats[f"reason: {reason}"] += 1
+                    action_reasons = validate_trajectory_steps(trajectory_steps)
 
-                continue
+                    try:
+                        converted = convert_record(raw)
+                    except (KeyError, TypeError, ValueError) as exc:
+                        reject(raw, batch_file, line_number,
+                               [f"convert_error:{type(exc).__name__}"])
+                        continue
 
-            fout.write(json.dumps(filtered, ensure_ascii=False) + "\n")
-            stats["kept"] += 1
+                    stats["converted"] += 1
 
-    # 7. 输出本次处理报告
-    print(f"输入文件：{input_path}")
-    print(f"输出文件：{output_path}")
+                    filtered, reasons = filter_sample(converted)
+                    reasons = list(dict.fromkeys(action_reasons + reasons))
+
+                    if reasons:
+                        reject(raw, batch_file, line_number, reasons)
+                        continue
+
+                    filtered["source_file"] = batch_file.name
+                    filtered["source_line"] = line_number
+                    filtered["trajectory_fingerprint"] = fingerprint
+                    clean_file.write(json.dumps(filtered, ensure_ascii=False) + "\n")
+                    stats["kept"] += 1
+                    kept_per_task[filtered["instance_id"]] += 1
+                    if isinstance(repo_name, str) and repo_name:
+                        kept_repository_counts[repo_name] += 1
+                    step_histogram[str(filtered["step_count"])] += 1
+                    teacher_tokens = filtered["token_usage_total"]
+                    if teacher_tokens >= DEFAULT_MAX_TOKEN_USAGE:
+                        stats["teacher_context_at_or_over_80k"] += 1
+                    bucket = f"{int(teacher_tokens) // 8192 * 8192}-{(int(teacher_tokens) // 8192 + 1) * 8192 - 1}"
+                    teacher_context_histogram[bucket] += 1
+
+        clean_file.flush()
+        os.fsync(clean_file.fileno())
+        rejected_file.flush()
+        os.fsync(rejected_file.fileno())
+        progress.set_postfix(kept=stats["kept"], rejected=stats["rejected"])
+        clean_file.close()
+        rejected_file.close()
+        progress.close()
+        os.replace(clean_pending, clean_path)
+        os.replace(rejected_pending, rejected_path)
+    except BaseException:
+        progress.close()
+        clean_file.close()
+        rejected_file.close()
+        clean_pending.unlink(missing_ok=True)
+        rejected_pending.unlink(missing_ok=True)
+        raise
+
+    report = {
+        "strategy": strategy,
+        "input_dir": str(input_dir.resolve()),
+        "batch_files": [path.name for path in batch_files],
+        "outputs": {
+            "clean_success_all": clean_path.name,
+            "rejected": rejected_path.name,
+        },
+        "limits": {
+            "max_steps": DEFAULT_MAX_STEPS,
+            "qwen3_max_sequence_length": DEFAULT_MAX_TOKEN_USAGE,
+            "qwen3_length_audited": False,
+        },
+        "counts": {
+            "total": stats["total"],
+            "converted": stats["converted"],
+            "kept": stats["kept"],
+            "rejected": stats["rejected"],
+            "unique_tasks_kept": len(kept_per_task),
+            "teacher_context_at_or_over_80k": stats[
+                "teacher_context_at_or_over_80k"
+            ],
+        },
+        "rejection_reasons": {
+            name.removeprefix("reason:"): count
+            for name, count in sorted(stats.items())
+            if name.startswith("reason:")
+        },
+        "repository_counts": dict(sorted(repository_counts.items())),
+        "kept_repository_counts": dict(sorted(kept_repository_counts.items())),
+        "successful_rollouts_per_task": dict(sorted(Counter(
+            kept_per_task.values()
+        ).items())),
+        "step_count_histogram": dict(sorted(
+            step_histogram.items(), key=lambda item: int(item[0])
+        )),
+        "teacher_context_histogram": dict(sorted(teacher_context_histogram.items())),
+    }
+    _atomic_json(report_path, report)
+
+    print(f"输入目录：{input_dir}")
+    print(f"批次文件：{len(batch_files)}")
+    print(f"输出目录：{output_dir}")
     print(f"原始样本：{stats['total']}")
     print(f"成功转换：{stats['converted']}")
     print(f"筛选保留：{stats['kept']}")
@@ -286,21 +582,25 @@ def run_pipeline(input_path: str, output_path: str):
         if name.startswith("reason:"):
             print(f"  {name.removeprefix('reason:')}: {count}")
 
+    print("\n注意：clean_success_all.jsonl 尚未完成 Qwen3 80K 长度审计。")
+    return report
+
 
 def main():
-    # with open("data_examples/swe-master-4b-50tasks-128k-150step.jsonl", "r") as f:
-    #     for line in f:
-    #         raw = json.loads(line)
-    #         break
-
-    # converted = convert_record(raw)
-
-    # print(converted.keys)
-    # print([message["role"] for message in converted["input"]])
-
-    input_path = "data_examples/r2e-gym-inference-traj/glm46_0_used_swe_rebench_1_demo.jsonl"
-    output_path = "data_examples/sft_data/glm46_0_used_swe_rebench_1_filtered.jsonl"
-    run_pipeline(input_path, output_path)
+    parser = argparse.ArgumentParser(
+        description="将 R2E-Gym teacher 轨迹转换为可审计的 RSFT 候选数据"
+    )
+    parser.add_argument(
+        "input_dir",
+        help="包含 batch-*.jsonl 的原始 trajectory 批次目录",
+    )
+    parser.add_argument("output_dir", help="输出 clean/rejected/report 的目录")
+    parser.add_argument(
+        "--strategy", choices=("rsft",), default="rsft",
+        help="本轮固定使用成功轨迹 rejection sampling",
+    )
+    args = parser.parse_args()
+    run_pipeline(args.input_dir, args.output_dir, strategy=args.strategy)
 
 if __name__ == "__main__":
     main()
