@@ -15,6 +15,7 @@ TASK_COUNT="${TASK_COUNT:-2000}"
 SEEDS="${SEEDS:-0,1,2}"
 WORKERS="${WORKERS:-12}"
 TEMPERATURE="${TEMPERATURE:-1.0}"
+LOG_TURNS="${LOG_TURNS:-1}"
 
 export LEAF_TEACHER_BASE_URL="${LEAF_TEACHER_BASE_URL:-https://api.deepseek.com/v1}"
 export LEAF_TEACHER_MODEL="${LEAF_TEACHER_MODEL:-deepseek-flash}"
@@ -84,10 +85,16 @@ echo "Log: ${LOG}"
 cd "${REPO_ROOT}"
 export PYTHONPATH="${REPO_ROOT}/R2E-Gym/src${PYTHONPATH:+:${PYTHONPATH}}"
 
+PROGRESS_ARGS=()
+if [[ "${LOG_TURNS}" == "1" ]]; then
+  PROGRESS_ARGS+=(--log-turns)
+fi
+
 "${PYTHON}" -u R2E-Gym/SWE-smith/scripts/collect_leaf_teacher_rollouts.py \
   --input "${INPUT}" \
   --output "${OUTPUT}" \
   --seeds "${SEEDS}" \
   --workers "${WORKERS}" \
   --temperature "${TEMPERATURE}" \
+  "${PROGRESS_ARGS[@]}" \
   2>&1 | tee -a "${LOG}"

@@ -17,6 +17,12 @@ from r2egym.agenthub.leaf.environment import LeafRepoEnv
 
 
 SCHEMA_VERSION = "leaf-frognano-5038f915"
+PROGRESS_LOCK = threading.Lock()
+
+
+def progress(message):
+    with PROGRESS_LOCK:
+        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {message}", flush=True)
 
 
 def entry_id(entry):
@@ -62,6 +68,7 @@ def message_dict(message):
 
 
 def generate_one(entry, seed, args):
+    task_id = entry_id(entry)
     env = LeafRepoEnv.from_dict(
         {**entry, "backend": args.backend, "step_timeout": args.step_timeout, "reward_timeout": args.reward_timeout}
     )
@@ -73,10 +80,11 @@ def generate_one(entry, seed, args):
     reward = 0.0
     test_output = ""
     try:
+        progress(f"START task={task_id} seed={seed} phase=container")
         instruction, _ = env.reset()
         messages = [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": instruction}]
         client = OpenAI(api_key=os.environ[args.api_key_env], base_url=args.base_url, timeout=args.request_timeout)
-        for _ in range(args.max_steps):
+        for turn in range(1, args.max_steps + 1):
             response = client.chat.completions.create(
                 model=args.model,
                 messages=messages,
@@ -102,6 +110,12 @@ def generate_one(entry, seed, args):
                 except (json.JSONDecodeError, TypeError):
                     arguments = {}
                 calls.append(LeafToolCall(call["id"], call["function"].get("name", ""), arguments))
+            if args.log_turns:
+                names = ",".join(call.name for call in calls) or "none"
+                progress(
+                    f"TURN task={task_id} seed={seed} turn={turn} "
+                    f"finish={choice.finish_reason or 'none'} tools={names}"
+                )
             action = LeafAction(tuple(calls), assistant.get("content") or "", assistant.get("reasoning_content") or "")
             results, _, done, info = env.step(action)
             for result in results:
@@ -114,6 +128,7 @@ def generate_one(entry, seed, args):
         else:
             exit_reason = "max_turns"
         patch = env.output_patch()
+        progress(f"REWARD task={task_id} seed={seed} patch_chars={len(patch)}")
         scored = env.env.runtime._calculate_reward(get_test_output=True, timeout=args.reward_timeout)
         if isinstance(scored, tuple):
             reward, test_output = scored
@@ -168,6 +183,7 @@ def main():
     parser.add_argument("--step-timeout", type=int, default=180)
     parser.add_argument("--reward-timeout", type=int, default=1800)
     parser.add_argument("--backend", default="docker")
+    parser.add_argument("--log-turns", action="store_true")
     args = parser.parse_args()
     if not args.base_url or not args.model or not os.environ.get(args.api_key_env):
         parser.error("teacher base URL, model, and API-key environment variable are required")
@@ -181,8 +197,15 @@ def main():
         for line in output.read_text().splitlines():
             record = json.loads(line)
             completed.add((record.get("instance_id"), record.get("seed")))
-    jobs = [(entry, seed) for entry in entries for seed in seeds if (entry_id(entry), seed) not in completed]
+    desired = [(entry, seed) for entry in entries for seed in seeds]
+    jobs = [(entry, seed) for entry, seed in desired if (entry_id(entry), seed) not in completed]
+    already_done = len(desired) - len(jobs)
+    progress(
+        f"RESUME target={len(desired)} already_done={already_done} "
+        f"remaining={len(jobs)} workers={args.workers}"
+    )
     lock = threading.Lock()
+    finished = successes = errors = 0
     with output.open("a", encoding="utf-8") as stream, ThreadPoolExecutor(max_workers=args.workers) as pool:
         futures = [pool.submit(generate_one, entry, seed, args) for entry, seed in jobs]
         for future in as_completed(futures):
@@ -190,6 +213,17 @@ def main():
             with lock:
                 stream.write(json.dumps(record, ensure_ascii=False) + "\n")
                 stream.flush()
+                finished += 1
+                successes += int(record["reward"] > 0)
+                errors += int(record["error"] is not None)
+                progress(
+                    f"DONE progress={already_done + finished}/{len(desired)} "
+                    f"task={record['instance_id']} seed={record['seed']} "
+                    f"reward={record['reward']:.1f} exit={record['exit_reason']} "
+                    f"turns={record['model_turns']} calls={record['tool_calls']} "
+                    f"seconds={record['elapsed_sec']:.1f} "
+                    f"new_successes={successes} new_errors={errors}"
+                )
 
 
 if __name__ == "__main__":
