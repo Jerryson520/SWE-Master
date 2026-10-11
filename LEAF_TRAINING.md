@@ -19,7 +19,7 @@ export DOCKER_HOST=unix:///var/run/docker.sock
 
 PYTHONPATH=R2E-Gym/src:DeepSWE_RL/rllm \
   R2E-Gym/.venv/bin/python \
-  DeepSWE_RL/rllm/examples/swe/generate_leaf_sft.py \
+  R2E-Gym/SWE-smith/scripts/collect_leaf_teacher_rollouts.py \
   --input /home/ecs-user/swe-smith-teacher-deepseek-flash-2000x3/selected-tasks.jsonl \
   --output /home/ecs-user/leaf-sft/raw/swesmith-2000x3.jsonl \
   --seeds 0,1,2 --workers 4
@@ -37,7 +37,7 @@ dataset revision `ea6d7173829c7ec8fa16c22055699ff2e9188091`. Three seeds produce
 ```bash
 PYTHONPATH=R2E-Gym/src:DeepSWE_RL/rllm \
   R2E-Gym/.venv/bin/python \
-  DeepSWE_RL/rllm/examples/swe/build_leaf_sft.py \
+  OpenRLHF_SFT/SFT_data_pre_process/build_leaf_sft.py \
   --input /home/ecs-user/leaf-sft/raw/swesmith-2000x3.jsonl \
   --output-dir /home/ecs-user/leaf-sft/split --replay
 
