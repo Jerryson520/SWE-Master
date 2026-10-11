@@ -1,8 +1,21 @@
-from rllm.environments.base.base_env import BaseEnv
-from rllm.environments.base.single_turn_env import SingleTurnEnvironment
-from rllm.environments.tools.tool_env import ToolEnvironment
+from importlib import import_module
 
 __all__ = ["BaseEnv", "SingleTurnEnvironment", "ToolEnvironment"]
+
+_LAZY_IMPORTS = {
+    "BaseEnv": ("rllm.environments.base.base_env", "BaseEnv"),
+    "SingleTurnEnvironment": ("rllm.environments.base.single_turn_env", "SingleTurnEnvironment"),
+    "ToolEnvironment": ("rllm.environments.tools.tool_env", "ToolEnvironment"),
+}
+
+
+def __getattr__(name):
+    if name not in _LAZY_IMPORTS:
+        raise AttributeError(name)
+    module_path, class_name = _LAZY_IMPORTS[name]
+    value = getattr(import_module(module_path), class_name)
+    globals()[name] = value
+    return value
 
 
 def safe_import(module_path, class_name):
