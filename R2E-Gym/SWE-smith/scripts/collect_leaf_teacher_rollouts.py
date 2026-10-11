@@ -13,7 +13,7 @@ from datasets import load_dataset
 from openai import OpenAI
 
 from r2egym.agenthub.leaf import LEAF_TOOLS, SYSTEM_PROMPT, LeafAction, LeafToolCall
-from rllm.environments.swe.swe_leaf import SWELeafEnv
+from r2egym.agenthub.leaf.environment import LeafRepoEnv
 
 
 SCHEMA_VERSION = "leaf-frognano-5038f915"
@@ -62,7 +62,7 @@ def message_dict(message):
 
 
 def generate_one(entry, seed, args):
-    env = SWELeafEnv.from_dict(
+    env = LeafRepoEnv.from_dict(
         {**entry, "backend": args.backend, "step_timeout": args.step_timeout, "reward_timeout": args.reward_timeout}
     )
     started = time.monotonic()

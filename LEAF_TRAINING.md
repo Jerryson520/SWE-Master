@@ -17,7 +17,7 @@ read -rsp 'DeepSeek API key: ' LEAF_TEACHER_API_KEY; echo
 export LEAF_TEACHER_API_KEY
 export DOCKER_HOST=unix:///var/run/docker.sock
 
-PYTHONPATH=R2E-Gym/src:DeepSWE_RL/rllm \
+PYTHONPATH=R2E-Gym/src \
   R2E-Gym/.venv/bin/python \
   R2E-Gym/SWE-smith/scripts/collect_leaf_teacher_rollouts.py \
   --input /home/ecs-user/swe-smith-teacher-deepseek-flash-2000x3/selected-tasks.jsonl \
@@ -35,7 +35,7 @@ dataset revision `ea6d7173829c7ec8fa16c22055699ff2e9188091`. Three seeds produce
 ## 2. Validate, replay, and tokenize
 
 ```bash
-PYTHONPATH=R2E-Gym/src:DeepSWE_RL/rllm \
+PYTHONPATH=R2E-Gym/src \
   R2E-Gym/.venv/bin/python \
   OpenRLHF_SFT/SFT_data_pre_process/build_leaf_sft.py \
   --input /home/ecs-user/leaf-sft/raw/swesmith-2000x3.jsonl \
