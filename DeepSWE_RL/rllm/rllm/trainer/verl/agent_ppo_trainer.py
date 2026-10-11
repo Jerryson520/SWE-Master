@@ -613,6 +613,7 @@ class AgentPPOTrainer(RayPPOTrainer):
         chat_completions = []
         traj_metrics = []
         termination_reasons = []
+        output_patches = []
         # timeout_infos = []
         traj_metrics_ori = []
         metrics = {}
@@ -634,6 +635,7 @@ class AgentPPOTrainer(RayPPOTrainer):
             all_masks_list.append(traj["response_masks"])
             traj_scores.append(traj["trajectory_reward"])
             termination_reasons.append(traj["termination_reason"])
+            output_patches.append(traj.get("output_patch", ""))
             # timeout_infos.append(traj["timeout_info"])
             chat_completions.append(traj["chat_completions"])
             traj_metrics.append(traj["metrics"])
@@ -674,6 +676,7 @@ class AgentPPOTrainer(RayPPOTrainer):
                             "traj_metric":traj_metrics_ori[idx_write],
                             # "global_step":int(self.global_steps),
                             "termination_reason":termination_reasons[idx_write],
+                            "output_patch": output_patches[idx_write],
                             # "timeout_info":timeout_infos[idx_write]
                         }
                         f.write(json.dumps(obj_now, ensure_ascii=False) + "\n")

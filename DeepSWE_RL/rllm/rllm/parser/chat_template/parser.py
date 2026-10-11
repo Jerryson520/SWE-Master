@@ -1,3 +1,5 @@
+import json
+
 from .utils import PARSER_TEST_MESSAGES
 
 
@@ -171,7 +173,18 @@ class QwenChatTemplateParser(ChatTemplateParser):
         return self.user_token + message["content"] + self.eot_token
 
     def parse_assistant(self, message):
-        result = self.assistant_token + message["content"] + self.eot_token
+        result = self.assistant_token + (message.get("content") or "")
+        for call in message.get("tool_calls") or []:
+            function = call.get("function") or {}
+            arguments = function.get("arguments", "{}")
+            if isinstance(arguments, str):
+                try:
+                    arguments = json.loads(arguments)
+                except json.JSONDecodeError:
+                    arguments = {}
+            payload = {"name": function.get("name", ""), "arguments": arguments}
+            result += self.tool_start_token + json.dumps(payload, ensure_ascii=False) + self.tool_end_token
+        result += self.eot_token
         return result
 
     def parse_tool(self, message):

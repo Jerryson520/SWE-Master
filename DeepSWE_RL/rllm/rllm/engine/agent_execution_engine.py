@@ -252,6 +252,7 @@ class AgentExecutionEngine:
         llm_time = 0.0
         env_time = 0.0
         reward = 0.0
+        output_patch = ""
 
         # for step return
         episode_steps = []
@@ -496,7 +497,7 @@ class AgentExecutionEngine:
 
             # Check if episode is done
             if done:
-                termination_reason = "ENV_DONE"
+                termination_reason = info.get("exit_reason", "ENV_DONE")
                 break
 
             response_tokens.extend(env_msg_tokens)
@@ -532,6 +533,12 @@ class AgentExecutionEngine:
                 reward = reward * 0.5
             cur_step.reward = reward
 
+        if hasattr(env, "output_patch") and not masked_out:
+            try:
+                output_patch = await loop.run_in_executor(self.executor, env.output_patch)
+            except Exception:
+                logger.exception("Failed to collect final output patch")
+
         # Closing environment using the executor.
         print(f"now closing env: {idx}")
         await loop.run_in_executor(self.executor, env.close)
@@ -559,6 +566,8 @@ class AgentExecutionEngine:
         if mode == "Text":
             return trajectory
         elif mode == "Token":
+            assistant_messages = [message for message in agent.chat_completions if message.get("role") == "assistant"]
+            tool_counts = [len(message.get("tool_calls") or []) for message in assistant_messages]
             token_result = {
                 "prompt_tokens": torch.tensor(prompt_tokens, dtype=torch.long),
                 "response_tokens": torch.tensor(response_tokens, dtype=torch.long),
@@ -567,6 +576,7 @@ class AgentExecutionEngine:
                 "idx": env.idx,
                 "chat_completions": agent.chat_completions,
                 "termination_reason":termination_reason if termination_reason else "",
+                "output_patch": output_patch,
                 "metrics": {
                     # Total number of steps taken in the trajectory
                     "steps": len(trajectory.steps),
@@ -582,6 +592,9 @@ class AgentExecutionEngine:
                     "total_response_tokens_num":len(response_tokens),
                     "response_tokens_env_num":env_tokens_len,
                     "response_tokens_model_gen_num":model_gen_tokens_len,
+                    "tool_calls": sum(tool_counts),
+                    "multi_tool_turns": sum(count > 1 for count in tool_counts),
+                    "natural_termination": int(termination_reason == "agent"),
                 },
             }
             return token_result
