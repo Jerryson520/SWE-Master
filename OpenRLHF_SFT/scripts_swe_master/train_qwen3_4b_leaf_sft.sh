@@ -5,6 +5,11 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 OPENRLHF_DIR="$(cd -- "${SCRIPT_DIR}/../OpenRLHF" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 STORAGE_ROOT="${STORAGE_ROOT:-${HOME}}"
+SFT_VENV="${SFT_VENV:-/root/autodl-tmp/venvs/swe-master-sft}"
+
+[[ -x "${SFT_VENV}/bin/python" ]] || { echo "SFT 虚拟环境不存在: ${SFT_VENV}" >&2; exit 1; }
+# shellcheck disable=SC1091
+source "${SFT_VENV}/bin/activate"
 
 MODEL_PATH="${MODEL_PATH:-${STORAGE_ROOT}/models/Qwen3-4B-Instruct-2507}"
 TRAIN_DATA_PATH="${TRAIN_DATA_PATH:-${DATA_PATH:-${STORAGE_ROOT}/leaf-sft/tokenized/train.jsonl}}"
