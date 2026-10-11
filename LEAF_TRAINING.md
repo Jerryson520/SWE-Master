@@ -28,6 +28,17 @@ PYTHONPATH=R2E-Gym/src \
 Every raw rollout is retained. Only resolved, non-empty, naturally terminated
 trajectories enter SFT.
 
+For the full 2,000 x 3 collection, prefer the resumable launcher. It adds a
+single-writer lock, append-only logging, preflight checks, and prompts for the
+API key when it is not already exported:
+
+```bash
+bash R2E-Gym/SWE-smith/scripts/run_leaf_teacher_2000x3.sh
+```
+
+Rerun the same command after an interruption. The collector skips completed
+`(instance_id, seed)` pairs already present in its output JSONL.
+
 The input is the existing stratified 2,000-task SWE-smith selection pinned to
 dataset revision `ea6d7173829c7ec8fa16c22055699ff2e9188091`. Three seeds produce
 6,000 raw Leaf trajectories. Do not substitute the R2E-Gym RL-readiness parquet.
