@@ -162,7 +162,7 @@ def main():
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--max-steps", type=int, default=150)
     parser.add_argument("--max-tokens-per-turn", type=int, default=8192)
-    parser.add_argument("--temperature", type=float, default=0.6)
+    parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--top-p", type=float, default=0.95)
     parser.add_argument("--request-timeout", type=int, default=7200)
     parser.add_argument("--step-timeout", type=int, default=180)

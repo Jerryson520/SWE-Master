@@ -48,6 +48,10 @@ TASK_COUNT=500 bash R2E-Gym/SWE-smith/scripts/run_leaf_teacher_2000x3.sh
 bash R2E-Gym/SWE-smith/scripts/run_leaf_teacher_2000x3.sh
 ```
 
+The launcher defaults to `temperature=1.0` and 12 workers for the planned
+32-core, 64-GiB collection host. All other generation and timeout settings use
+the collector defaults. Override concurrency with `WORKERS` if required.
+
 The input is the existing stratified 2,000-task SWE-smith selection pinned to
 dataset revision `ea6d7173829c7ec8fa16c22055699ff2e9188091`. Three seeds produce
 6,000 raw Leaf trajectories. Do not substitute the R2E-Gym RL-readiness parquet.
