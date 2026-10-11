@@ -20,13 +20,17 @@ export DOCKER_HOST=unix:///var/run/docker.sock
 PYTHONPATH=R2E-Gym/src:DeepSWE_RL/rllm \
   R2E-Gym/.venv/bin/python \
   DeepSWE_RL/rllm/examples/swe/generate_leaf_sft.py \
-  --input /home/ecs-user/SWE-Master/rl_readiness/teacher_300_grpo.parquet \
-  --output /home/ecs-user/leaf-sft/raw/teacher-trajectories.jsonl \
-  --seeds 0,1,2 --workers 8
+  --input /home/ecs-user/swe-smith-teacher-deepseek-flash-2000x3/selected-tasks.jsonl \
+  --output /home/ecs-user/leaf-sft/raw/swesmith-2000x3.jsonl \
+  --seeds 0,1,2 --workers 4
 ```
 
 Every raw rollout is retained. Only resolved, non-empty, naturally terminated
 trajectories enter SFT.
+
+The input is the existing stratified 2,000-task SWE-smith selection pinned to
+dataset revision `ea6d7173829c7ec8fa16c22055699ff2e9188091`. Three seeds produce
+6,000 raw Leaf trajectories. Do not substitute the R2E-Gym RL-readiness parquet.
 
 ## 2. Validate, replay, and tokenize
 
@@ -34,7 +38,7 @@ trajectories enter SFT.
 PYTHONPATH=R2E-Gym/src:DeepSWE_RL/rllm \
   R2E-Gym/.venv/bin/python \
   DeepSWE_RL/rllm/examples/swe/build_leaf_sft.py \
-  --input /home/ecs-user/leaf-sft/raw/teacher-trajectories.jsonl \
+  --input /home/ecs-user/leaf-sft/raw/swesmith-2000x3.jsonl \
   --output-dir /home/ecs-user/leaf-sft/split --replay
 
 for split in train validation; do
