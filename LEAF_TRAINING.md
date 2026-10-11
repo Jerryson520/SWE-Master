@@ -39,6 +39,15 @@ bash R2E-Gym/SWE-smith/scripts/run_leaf_teacher_2000x3.sh
 Rerun the same command after an interruption. The collector skips completed
 `(instance_id, seed)` pairs already present in its output JSONL.
 
+To stage the run with the first 500 tasks while keeping one resumable full-run
+output, use `TASK_COUNT=500`. Later run the launcher without `TASK_COUNT`; the
+already completed 500 x 3 pairs are skipped and only the remaining tasks run:
+
+```bash
+TASK_COUNT=500 bash R2E-Gym/SWE-smith/scripts/run_leaf_teacher_2000x3.sh
+bash R2E-Gym/SWE-smith/scripts/run_leaf_teacher_2000x3.sh
+```
+
 The input is the existing stratified 2,000-task SWE-smith selection pinned to
 dataset revision `ea6d7173829c7ec8fa16c22055699ff2e9188091`. Three seeds produce
 6,000 raw Leaf trajectories. Do not substitute the R2E-Gym RL-readiness parquet.
