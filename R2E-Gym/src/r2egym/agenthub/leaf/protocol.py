@@ -7,6 +7,7 @@ from typing import Any
 SYSTEM_PROMPT = (
     "You are a software-engineering agent working in a checked-out repository.\n"
     "Use the available tools to inspect files, make focused edits, and run commands.\n"
+    "Use Grep to search file contents and Glob to search for file names.\n"
     "Solve the task, validate when practical, then give a brief final answer."
 )
 

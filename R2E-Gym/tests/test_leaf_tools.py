@@ -1,4 +1,5 @@
 import subprocess
+import shutil
 from pathlib import Path
 
 import pytest
@@ -6,6 +7,7 @@ import pytest
 from r2egym.agenthub.leaf import TOOL_DEFINITIONS, AgentAction, ToolCall, ToolResult
 from r2egym.agenthub.leaf.tools import ToolContext, ToolRegistry, create_default_registry
 from r2egym.agenthub.leaf.tools.base import BaseTool, ToolOutput
+from r2egym.agenthub.leaf.tools.ripgrep import resolve_host_rg
 
 
 class LocalRuntime:
@@ -30,9 +32,16 @@ class LocalRuntime:
         status = "0" if result.returncode == 0 else f"Error: Exit code {result.returncode}"
         return result.stdout, result.stderr, status
 
+    def copy_to_container(self, src_path, dest_path):
+        Path(dest_path).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src_path, dest_path)
+
+
 @pytest.fixture
 def tools(tmp_path):
-    return create_default_registry(), ToolContext(LocalRuntime(), str(tmp_path), 5)
+    registry = create_default_registry()
+    registry.get("Grep")._rg_path = str(resolve_host_rg(download=False))
+    return registry, ToolContext(LocalRuntime(), str(tmp_path), 5)
 
 
 def execute(tools, name, arguments):
@@ -48,6 +57,41 @@ def test_read_write_edit_glob_and_bash(tools):
     result = execute(tools, "Bash", {"command": "printf ok"})
     assert result.success
     assert result.content == "Exit code: 0\nSTDOUT:\nok\nSTDERR:\n"
+
+
+def test_grep_modes_filters_unicode_and_limits(tools):
+    _, context = tools
+    Path(context.workdir, "a.py").write_text("Alpha\nneedle one\n中文 needle\n")
+    Path(context.workdir, "b.txt").write_text("needle two\n")
+    files = execute(tools, "Grep", {"pattern": "needle", "glob": "*.py"})
+    assert files.success and files.content == "a.py"
+    content = execute(tools, "Grep", {"pattern": "中文|Alpha", "path": "a.py", "output_mode": "content"})
+    assert content.success
+    assert "1:Alpha" in content.content and "3:中文 needle" in content.content
+    count = execute(tools, "Grep", {"pattern": "needle", "output_mode": "count"})
+    assert count.success and count.content.splitlines() == ["a.py:2", "b.txt:1"]
+    limited = execute(tools, "Grep", {"pattern": "needle", "output_mode": "content", "offset": 1, "head_limit": 1})
+    assert limited.success and len(limited.content.splitlines()) == 1
+    assert limited.metadata["truncated"]
+
+
+def test_grep_no_match_and_invalid_regex_are_observable(tools):
+    _, context = tools
+    Path(context.workdir, "a.txt").write_text("hello\n")
+    missing = execute(tools, "Grep", {"pattern": "absent"})
+    assert missing.success and missing.content == "No matches found."
+    invalid = execute(tools, "Grep", {"pattern": "[", "output_mode": "content"})
+    assert not invalid.success
+    assert invalid.metadata["returncode"] == 2
+    assert "Error:" in invalid.content
+
+
+def test_grep_argument_validation(tools):
+    assert execute(tools, "Grep", {}).content == "ValueError: pattern is required"
+    invalid_mode = execute(tools, "Grep", {"pattern": "x", "output_mode": "wrong"})
+    assert not invalid_mode.success and "output_mode must be one of" in invalid_mode.content
+    negative = execute(tools, "Grep", {"pattern": "x", "head_limit": -1})
+    assert not negative.success and "must be non-negative" in negative.content
 
 
 def test_edit_requires_unique_match(tools):
@@ -73,7 +117,7 @@ def test_protocol_types_are_generic():
 
 
 def test_tool_definitions_match_existing_wire_contract():
-    assert [item["function"]["name"] for item in TOOL_DEFINITIONS] == ["Read", "Write", "Edit", "Glob", "Bash"]
+    assert [item["function"]["name"] for item in TOOL_DEFINITIONS] == ["Read", "Write", "Edit", "Glob", "Grep", "Bash"]
     assert TOOL_DEFINITIONS[0]["function"]["parameters"] == {
         "type": "object",
         "properties": {
@@ -83,6 +127,9 @@ def test_tool_definitions_match_existing_wire_contract():
         },
         "required": ["file_path"],
     }
+    grep_schema = TOOL_DEFINITIONS[4]["function"]["parameters"]
+    assert grep_schema["required"] == ["pattern"]
+    assert grep_schema["properties"]["output_mode"]["enum"] == ["content", "files_with_matches", "count"]
 
 
 def test_registry_does_not_hide_tool_key_errors(tmp_path):

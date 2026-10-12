@@ -20,10 +20,14 @@ class ParameterSpec:
     description: str
     required: bool = False
     default: Any = MISSING
+    enum: tuple[Any, ...] | None = None
     normalize: Callable[[Any], Any] | None = field(default=None, repr=False, compare=False)
 
     def schema(self) -> dict[str, Any]:
-        return {"type": self.json_type, "description": self.description}
+        schema = {"type": self.json_type, "description": self.description}
+        if self.enum is not None:
+            schema["enum"] = list(self.enum)
+        return schema
 
     def parse(self, raw: dict[str, Any]) -> Any:
         if self.name not in raw:
@@ -48,6 +52,9 @@ class ParameterSpec:
         }.get(self.json_type)
         if expected is not None and not isinstance(value, expected):
             raise ToolCallError(f"{self.name} has invalid type")
+        if self.enum is not None and value not in self.enum:
+            choices = ", ".join(map(str, self.enum))
+            raise ToolCallError(f"{self.name} must be one of: {choices}")
         return value
 
 

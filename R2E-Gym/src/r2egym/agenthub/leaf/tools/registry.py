@@ -9,6 +9,7 @@ from .base import BaseTool, ToolCallError, ToolContext, ToolExecutionError, Tool
 from .bash import BashTool
 from .edit import EditTool
 from .glob import GlobTool
+from .grep import GrepTool
 from .read import ReadTool
 from .write import WriteTool
 
@@ -19,6 +20,9 @@ class ToolRuntimeConfig:
     bash_output_chars: int = 30000
     glob_limit: int = 1000
     bash_timeout_sec: float = 120
+    grep_output_chars: int = 30000
+    grep_head_limit: int = 250
+    grep_timeout_sec: float = 30
 
 
 class ToolRegistry:
@@ -63,6 +67,11 @@ def create_default_registry(config: ToolRuntimeConfig | None = None) -> ToolRegi
             WriteTool(),
             EditTool(),
             GlobTool(limit=config.glob_limit),
+            GrepTool(
+                output_chars=config.grep_output_chars,
+                default_head_limit=config.grep_head_limit,
+                default_timeout=config.grep_timeout_sec,
+            ),
             BashTool(output_chars=config.bash_output_chars, default_timeout=config.bash_timeout_sec),
         ]
     )
