@@ -6,12 +6,12 @@ import hashlib
 import json
 from pathlib import Path
 
-from r2egym.agenthub.leaf import LEAF_TOOLS, LeafAction, LeafToolCall
-from rllm.environments.swe.swe_leaf import SWELeafEnv
+from r2egym.agenthub.leaf import TOOL_DEFINITIONS, AgentAction, ToolCall
+from rllm.environments.swe.swe_leaf import SWERepoToolEnvironment
 
 
-ALLOWED = {tool["function"]["name"] for tool in LEAF_TOOLS}
-SCHEMAS = {tool["function"]["name"]: tool["function"]["parameters"] for tool in LEAF_TOOLS}
+ALLOWED = {tool["function"]["name"] for tool in TOOL_DEFINITIONS}
+SCHEMAS = {tool["function"]["name"]: tool["function"]["parameters"] for tool in TOOL_DEFINITIONS}
 FORBIDDEN = {"submit", "finish", "execute_bash", "str_replace_editor", "file_editor", "search"}
 
 
@@ -70,7 +70,7 @@ def structural_errors(record):
 
 
 def replay(record, args):
-    env = SWELeafEnv.from_dict(
+    env = SWERepoToolEnvironment.from_dict(
         {**record["entry"], "backend": args.backend, "step_timeout": args.step_timeout, "reward_timeout": args.reward_timeout}
     )
     try:
@@ -81,8 +81,8 @@ def replay(record, args):
             calls = []
             for call in message["tool_calls"]:
                 function = call["function"]
-                calls.append(LeafToolCall(call["id"], function["name"], json.loads(function["arguments"])))
-            env.step(LeafAction(tuple(calls)))
+                calls.append(ToolCall(call["id"], function["name"], json.loads(function["arguments"])))
+            env.step(AgentAction(tuple(calls)))
         patch = env.output_patch()
         reward = env.compute_final_reward()
         return patch == record["output_patch"] and float(reward) >= 1
@@ -126,7 +126,7 @@ def main():
             split = "validation" if bucket < args.validation_percent else "train"
             sample = {
                 "input": record["messages"],
-                "tools": LEAF_TOOLS,
+                "tools": TOOL_DEFINITIONS,
                 "instance_id": record["instance_id"],
                 "repo": record.get("repo"),
                 "seed": record["seed"],

@@ -12,8 +12,7 @@ from pathlib import Path
 from datasets import load_dataset
 from openai import OpenAI
 
-from r2egym.agenthub.leaf import LEAF_TOOLS, SYSTEM_PROMPT, LeafAction, LeafToolCall
-from r2egym.agenthub.leaf.environment import LeafRepoEnv
+from r2egym.agenthub.leaf import TOOL_DEFINITIONS, SYSTEM_PROMPT, AgentAction, RepoToolEnvironment, ToolCall
 
 
 SCHEMA_VERSION = "leaf-frognano-5038f915"
@@ -69,7 +68,7 @@ def message_dict(message):
 
 def generate_one(entry, seed, args):
     task_id = entry_id(entry)
-    env = LeafRepoEnv.from_dict(
+    env = RepoToolEnvironment.from_dict(
         {**entry, "backend": args.backend, "step_timeout": args.step_timeout, "reward_timeout": args.reward_timeout}
     )
     started = time.monotonic()
@@ -88,7 +87,7 @@ def generate_one(entry, seed, args):
             response = client.chat.completions.create(
                 model=args.model,
                 messages=messages,
-                tools=LEAF_TOOLS,
+                tools=TOOL_DEFINITIONS,
                 tool_choice="auto",
                 parallel_tool_calls=True,
                 temperature=args.temperature,
@@ -109,14 +108,14 @@ def generate_one(entry, seed, args):
                     arguments = arguments if isinstance(arguments, dict) else {}
                 except (json.JSONDecodeError, TypeError):
                     arguments = {}
-                calls.append(LeafToolCall(call["id"], call["function"].get("name", ""), arguments))
+                calls.append(ToolCall(call["id"], call["function"].get("name", ""), arguments))
             if args.log_turns:
                 names = ",".join(call.name for call in calls) or "none"
                 progress(
                     f"TURN task={task_id} seed={seed} turn={turn} "
                     f"finish={choice.finish_reason or 'none'} tools={names}"
                 )
-            action = LeafAction(tuple(calls), assistant.get("content") or "", assistant.get("reasoning_content") or "")
+            action = AgentAction(tuple(calls), assistant.get("content") or "", assistant.get("reasoning_content") or "")
             results, _, done, info = env.step(action)
             for result in results:
                 messages.append(
@@ -154,7 +153,7 @@ def generate_one(entry, seed, args):
         },
         "seed": seed,
         "messages": messages,
-        "tools": LEAF_TOOLS,
+        "tools": TOOL_DEFINITIONS,
         "output_patch": patch,
         "reward": float(reward),
         "test_output": str(test_output),

@@ -16,7 +16,7 @@ ENV_CLASSES = {
     "swe": safe_import("rllm.environments.swe.swe", "SWEEnv"),
     "swe_sim": safe_import("rllm.environments.swe.swe_sim", "SWEEnv"),
     "swe_arsenal": safe_import("rllm.environments.swe.swe_arsenal","SWEEnv"),
-    "swe_leaf": safe_import("rllm.environments.swe.swe_leaf", "SWELeafEnv"),
+    "swe_leaf": safe_import("rllm.environments.swe.swe_leaf", "SWERepoToolEnvironment"),
     "competition_coding": safe_import("rllm.environments.code.competition_coding", "CompetitionCodingEnv"),
 }
 
@@ -26,7 +26,7 @@ AGENT_CLASSES = {
     "frozenlakeagent": safe_import("rllm.agents.frozenlake_agent", "FrozenLakeAgent"),
     "tool_agent": safe_import("rllm.agents.tool_agent", "ToolAgent"),
     "sweagent": safe_import("rllm.agents.swe_agent", "SWEAgent"),
-    "leafagent": safe_import("rllm.agents.leaf_agent", "LeafAgent"),
+    "leafagent": safe_import("rllm.agents.leaf_agent", "FunctionCallingAgent"),
     "math_agent": safe_import("rllm.agents.math_agent", "MathAgent"),
     "code_agent": safe_import("rllm.agents.code_agent", "CompetitionCodingAgent"),
 }
