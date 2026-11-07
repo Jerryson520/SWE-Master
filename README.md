@@ -41,6 +41,10 @@ Teacher rollouts use paired offline images, host-side anti-hack enforcement,
 and verifier isolation. See
 [`docs/OFFLINE_ROLLOUT_SECURITY.md`](docs/OFFLINE_ROLLOUT_SECURITY.md).
 
+The reasoning-content Full SFT dataset can be audited for self-repetition,
+cross-turn repetition, and tool-output copying with the workflow in
+[`docs/TEACHER_REASONING_REPETITION.md`](docs/TEACHER_REASONING_REPETITION.md).
+
 
 # 🤖 Models
 You can find all the trained models [**Here**](https://huggingface.co/collections/RUC-AIBOX/swe-agent-series), including:
