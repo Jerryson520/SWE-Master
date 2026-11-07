@@ -4,6 +4,7 @@ import inspect
 import json
 
 from r2egym.agenthub.environment.env import EnvArgs, RepoEnv
+from r2egym.agenthub.leaf.antihack import AntiHackGuard
 from r2egym.agenthub.leaf.protocol import AgentAction, ToolResult
 from r2egym.agenthub.leaf.tools import ToolContext, ToolRegistry, ToolRuntimeConfig, create_default_registry
 
@@ -21,10 +22,17 @@ class RepoToolEnvironment:
         bash_output_chars=30000,
         glob_limit=1000,
         bash_timeout_sec=120,
+        prepared_image_manifest=None,
+        require_prepared_images=False,
+        network_mode="host",
+        antihack=None,
         tool_registry: ToolRegistry | None = None,
         **_: object,
     ):
-        self.entry = entry or {}
+        self.entry = dict(entry or {})
+        self.entry["_prepared_image_manifest"] = prepared_image_manifest
+        self.entry["_require_prepared_image"] = bool(require_prepared_images)
+        self.entry["_network_mode"] = network_mode
         self.step_timeout = step_timeout
         self.reward_timeout = reward_timeout
         self.backend = backend
@@ -34,6 +42,7 @@ class RepoToolEnvironment:
         self.has_container = False
         self.total_steps = 0
         self.tool_calls = 0
+        self.antihack = AntiHackGuard(antihack)
         self.tool_registry = tool_registry or create_default_registry(
             ToolRuntimeConfig(
                 tool_output_chars=tool_output_chars,
@@ -44,6 +53,7 @@ class RepoToolEnvironment:
         )
 
     def reset(self):
+        self.antihack.reset()
         if self.env is None:
             self.env = RepoEnv(
                 EnvArgs(ds=self.entry), backend=self.backend, step_timeout=self.step_timeout,
@@ -57,6 +67,18 @@ class RepoToolEnvironment:
         return self.env.get_task_instruction(), {"leaf_tools": True}
 
     def _execute(self, call):
+        event_context = {
+            "instance_id": self.entry.get("instance_id"),
+            "step": self.total_steps,
+            "tool_call_id": call.id,
+            "container_name": getattr(self.env.runtime, "container_name", None),
+        }
+        output = self.antihack.intercept(
+            {"tool": call.name, "params": call.arguments},
+            event_context=event_context,
+        )
+        if output is not None:
+            return ToolResult(tool_call_id=call.id, name=call.name, content=output.content), output
         context = ToolContext(
             runtime=self.env.runtime,
             workdir=self.env.runtime.repo_path,
@@ -88,9 +110,18 @@ class RepoToolEnvironment:
     def output_patch(self):
         return self.env.runtime.get_patch()
 
+    def environment_info(self):
+        return self.env.runtime.environment_info()
+
+    def antihack_summary(self):
+        """Host-side guard telemetry; never included in model-visible messages."""
+        return self.antihack.summary()
+
     def close(self):
         if self.env is not None:
             self.env.close()
+            self.env = None
+            self.has_container = False
 
     @staticmethod
     def from_dict(extra_info):

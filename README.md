@@ -37,6 +37,10 @@ Experiment datasets, adapters, and checkpoints are stored outside Git. See
 [`docs/ARTIFACT_STORAGE.md`](docs/ARTIFACT_STORAGE.md) and the versioned
 manifests under [`artifacts/`](artifacts/).
 
+Teacher rollouts use paired offline images, host-side anti-hack enforcement,
+and verifier isolation. See
+[`docs/OFFLINE_ROLLOUT_SECURITY.md`](docs/OFFLINE_ROLLOUT_SECURITY.md).
+
 
 # 🤖 Models
 You can find all the trained models [**Here**](https://huggingface.co/collections/RUC-AIBOX/swe-agent-series), including:

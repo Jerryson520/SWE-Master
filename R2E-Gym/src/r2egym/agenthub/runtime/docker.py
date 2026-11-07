@@ -18,6 +18,7 @@ import subprocess
 import datetime
 import hashlib
 import shutil
+import shlex
 import uuid
 
 import docker
@@ -40,6 +41,11 @@ from r2egym.agenthub.trajectory.swebench_utils import (
 from r2egym.agenthub.utils.utils import get_logger
 from r2egym.commit_models.diff_classes import ParsedCommit
 from r2egym.swesmith.utils import get_test_command
+from r2egym.imageprep.manifest import resolve_prepared_image
+from r2egym.imageprep.sanitization import (
+    SWESMITH_SANITIZATION_VERSION,
+    build_swesmith_sanitize_command,
+)
 
 from kubernetes import client, config, watch
 
@@ -91,6 +97,7 @@ from swebench_fork_swerebench.harness.grading import get_resolution_status as ge
 
 # SWE-smith specific imports
 from swesmith.profiles import registry as swesmith_registry
+from swesmith.profiles.golang import GoProfile
 from swesmith.harness.grading import get_eval_tests_report as get_eval_tests_report_swesmith
 from swesmith.constants import TEST_OUTPUT_START, TEST_OUTPUT_END
 
@@ -135,6 +142,20 @@ class DockerRuntime(ExecutionEnvironment):
     - list files excluding test files etc
     """
 
+    def _select_prepared_image(self) -> None:
+        """Resolve a prepared image and fail closed into offline execution."""
+        if self.require_prepared_image and not self.prepared_image_manifest:
+            raise RuntimeError("prepared image manifest is required")
+        if not self.prepared_image_manifest:
+            return
+        self.prepared_image_record = resolve_prepared_image(
+            self.prepared_image_manifest,
+            self.source_docker_image,
+            self.ds.get("instance_id", ""),
+        )
+        self.docker_image = self.prepared_image_record["prepared_reference"]
+        self.network_mode = "none"
+
     def __init__(
         self,
         ds,  # dataset entry: defaulting to this (required for all dockers moving forward)
@@ -146,11 +167,15 @@ class DockerRuntime(ExecutionEnvironment):
         logger=None,
         backend="docker",
         use_lsp : bool = False,
+        prepared_image_manifest: str | None = None,
+        require_prepared_image: bool = False,
+        network_mode: str | None = None,
         **docker_kwargs,
     ):
         # check if ds is provided (required for all dockers moving forward)
         assert ds, f"Dataset not provided for docker image: {docker_image}"
         assert backend in ["docker", "kubernetes"], f"Invalid backend: {backend}"
+        self.backend = backend
         if logger is None:
             if self.backend == "docker":
                 logger_name = "DockerRuntime"
@@ -165,7 +190,6 @@ class DockerRuntime(ExecutionEnvironment):
         self.use_lsp = use_lsp
         # swebench specific setup
         self.ds = ds
-        self.backend = backend
         ds_image = None
         if "docker_image" in self.ds:
             ds_image = self.ds["docker_image"]
@@ -177,9 +201,32 @@ class DockerRuntime(ExecutionEnvironment):
         if "instance_id" in ds:
             self.instance_id = ds['instance_id']
 
-        self.docker_image = ds_image if not docker_image else docker_image
+        self.source_docker_image = ds_image if not docker_image else docker_image
+        self.docker_image = self.source_docker_image
+        self.prepared_image_record = None
+        self.prepared_image_manifest = (
+            prepared_image_manifest or self.ds.get("_prepared_image_manifest")
+        )
+        self.require_prepared_image = bool(
+            require_prepared_image or self.ds.get("_require_prepared_image", False)
+        )
+        self.network_mode = str(network_mode or self.ds.get("_network_mode", "host"))
+        if self.network_mode not in {"host", "bridge", "none"}:
+            raise ValueError(f"Unsupported Docker network mode: {self.network_mode}")
         self.swebench_verified = "swebench" in self.docker_image or "epoch-research" in self.docker_image
-        self.swesmith = "swesmith" in self.docker_image
+        dataset_name = str(self.ds.get("dataset_name", "")).lower()
+        source_image = str(
+            self.ds.get("source_image_name", self.ds.get("image_name", ""))
+        ).lower()
+        runtime_image = self.docker_image.lower()
+        self.swesmith = (
+            dataset_name in {"swe-smith", "swesmith"}
+            or "swesmith" in source_image
+            or "swe-smith" in source_image
+            or "swesmith" in runtime_image
+            or "swe-smith" in runtime_image
+        )
+        self._select_prepared_image()
         self.swerebench = "swerebench" in self.docker_image
         self.swegym = "xingyaoww" in self.docker_image
 
@@ -272,6 +319,8 @@ class DockerRuntime(ExecutionEnvironment):
             )
             self.commit = ParsedCommit(**json.loads(self.commit_json))
         self.docker_kwargs = docker_kwargs
+        if self.swesmith:
+            self._validate_swesmith_container_security(docker_kwargs)
 
 
         self.ip = ip or ""
@@ -351,6 +400,19 @@ class DockerRuntime(ExecutionEnvironment):
         image_name_sanitized = image_name.replace("/", "-")
         image_name_sanitized = image_name_sanitized.replace(":", "-")
         return f"{image_name_sanitized[:100]}-{uuid.uuid4().hex}"
+
+    def _validate_swesmith_container_security(self, docker_kwargs: dict[str, Any]) -> None:
+        """Reject host escape surfaces before a SWE-smith container is created."""
+        if self.backend != "docker" or self.network_mode != "none":
+            raise RuntimeError("SWE-smith prepared images require Docker network=none")
+        if docker_kwargs.get("privileged"):
+            raise RuntimeError("SWE-smith containers may not be privileged")
+        for key in ("pid_mode", "ipc_mode"):
+            if str(docker_kwargs.get(key, "")).lower() == "host":
+                raise RuntimeError(f"SWE-smith containers may not use {key}=host")
+        for key in ("volumes", "mounts", "devices"):
+            if docker_kwargs.get(key):
+                raise RuntimeError(f"SWE-smith containers may not use host {key}")
 
     def _start_kubernetes_pod(
         self, docker_image: str, command: str, pod_name: str, **docker_kwargs
@@ -522,7 +584,7 @@ class DockerRuntime(ExecutionEnvironment):
                     detach=True,
                     tty=True,
                     stdin_open=True,
-                    network_mode='host',
+                    network_mode=self.network_mode,
                     **docker_kwargs,
                 )
             elif self.backend == "kubernetes":
@@ -618,6 +680,13 @@ class DockerRuntime(ExecutionEnvironment):
         Retrieves test files using swesmith registry and constructs a git checkout command.
         """
         rp = swesmith_registry.get_from_inst(self.ds)
+        if isinstance(rp, GoProfile):
+            return [
+                "git ls-tree -r --name-only HEAD | "
+                "grep -E '_test\\.go$' | "
+                "while IFS= read -r file; do "
+                "git checkout HEAD -- \"$file\"; done"
+            ]
         f2p_files, p2p_files = rp.get_test_files(self.ds)
         all_files = list(set(f2p_files + p2p_files))
         
@@ -626,7 +695,7 @@ class DockerRuntime(ExecutionEnvironment):
              # Use robust command construction to avoid argument length limits if any
              cmd = (
                 f'printf "%s\\n" {" ".join(all_files)} | '
-                f'xargs -n1 -I{{}} git checkout HEAD~1 -- "{{}}" 2>/dev/null'
+                f'xargs -n1 -I{{}} git checkout HEAD -- "{{}}" 2>/dev/null'
             )
              cmds.append(cmd)
         
@@ -640,6 +709,10 @@ class DockerRuntime(ExecutionEnvironment):
         
         self.logger.info(f"now in reset_swesmith_tests reset test files to HEAD~1 for evaluation")
         
+        if not cmds:
+            self.logger.info("no SWE-smith test files need to be reset")
+            return
+
         # Execute commands
         full_reset_command = " && ".join(cmds)
         output, error_code = self.run(full_reset_command)
@@ -755,23 +828,16 @@ class DockerRuntime(ExecutionEnvironment):
 
     def setup_env_swesmith(self):
         try:
+            if not self.prepared_image_record:
+                raise RuntimeError("SWE-smith prepared image record is missing")
 
-            # Add git mirror
-            self.logger.info(f"SWE-smith Adding git mirror")
-            # self.run("git config --global url.\"https://gh-proxy.com/github.com/\".insteadOf \"https://github.com/\"")
-
-            self.run("git config --global url.\"https://hk.gh-proxy.com/https://github.com/\".insteadOf \"https://github.com/\"")
-
-
-            # commit_id = self.ds['base_commit']
-            self.run("git fetch")
-            self.run("git status")
-            self.run("git restore .")
-            self.run("git reset --hard")
-            # self.run(f"git checkout {commit_id}")
-            self.logger.info(f"SWE-smith Checking out commit: {self.ds['instance_id']}")
-            self.run(f"git checkout {self.ds['instance_id']}") # Modified: see issue: https://github.com/SWE-bench/SWE-smith/issues/118
-            self.run("git clean -fdq")
+            instance_id = self.ds["instance_id"]
+            setup_command = build_swesmith_sanitize_command(instance_id)
+            output, status = self.run(setup_command, timeout=120, workdir="/testbed")
+            if str(status) != "0":
+                raise RuntimeError(f"offline Git checkout failed for {instance_id}: {output}")
+            if self.prepared_image_record.get("sanitization_version") != SWESMITH_SANITIZATION_VERSION:
+                raise RuntimeError("SWE-smith sanitization contract mismatch")
 
 
             # Setup the run_test.sh script for subsequent testing.  
@@ -781,13 +847,22 @@ class DockerRuntime(ExecutionEnvironment):
             rp = swesmith_registry.get_from_inst(self.ds)
             test_command, _ = rp.get_test_cmd(self.ds)
             
-            eval_script_content = "\n".join(
-                [
-                    "#!/bin/bash",
-                    "set -uxo pipefail",
+            if isinstance(rp, GoProfile):
+                runtime_setup = [
+                    'export PATH="/usr/local/go/bin:/usr/local/bin:$PATH"',
+                    "export GOPROXY=off",
+                    "cd /testbed",
+                ]
+            else:
+                runtime_setup = [
                     "source /opt/miniconda3/bin/activate",
-                    f"conda activate testbed",
-                    f"cd testbed/",
+                    "conda activate testbed",
+                    "cd /testbed",
+                ]
+            eval_script_content = "\n".join(
+                ["#!/bin/bash", "set -uxo pipefail"]
+                + runtime_setup
+                + [
                     f": '{TEST_OUTPUT_START}'", # [NEW] Use swesmith constants
                     test_command,
                     f": '{TEST_OUTPUT_END}'",   # [NEW] Use swesmith constants
@@ -810,15 +885,30 @@ class DockerRuntime(ExecutionEnvironment):
             # self.logger.info(f"SWE-smith Linking conda env to /root/.venv")
             # Ensure can call and execute the tools in /usr/local/bin.
 
-            bash_output, error_code = self.run(f"ln -s /opt/miniconda3/envs/testbed /root/.venv")
+            bash_output, error_code = self.run(f"ln -sfn /opt/miniconda3/envs/testbed /root/.venv")
             self.logger.info(f"ln -s /opt/miniconda3/envs/testbed /root/.venv:{bash_output}, error_code:{error_code}")
 
             self.run('echo \'export PATH="/usr/local/bin:$PATH"\' >> ~/.bashrc')
-            self.run("python -m pip install chardet")
             self.logger.info(f"Environment setup completed for swesmith: {self.docker_image}")
 
         except Exception as e:
             self.logger.error(f"SWE-smith Error setting up environment: {repr(e)}")
+            raise
+
+    def environment_info(self):
+        record = self.prepared_image_record or {}
+        return {
+            "source_image": self.source_docker_image,
+            "source_digest": record.get("source_digest"),
+            "prepared_image": record.get("agent_reference", record.get("prepared_tag_reference")),
+            "prepared_digest": record.get("agent_digest", record.get("prepared_digest")),
+            "image_role": "agent" if record.get("agent_reference") else "shared",
+            "isolation_verified": bool(record.get("isolation_verified", False)),
+            "prepare_version": record.get("prepare_version"),
+            "offline_verified": bool(record.get("offline_verification", {}).get("passed", False)),
+            "network_mode": self.network_mode,
+        }
+
 
     def setup_env_swebench(self):
         try:
@@ -857,6 +947,31 @@ class DockerRuntime(ExecutionEnvironment):
                     raise RuntimeError(
                         "failed to install pinned ripgrep 15.1.0: "
                         + str(rg_output).strip()[:1000]
+                    )
+                self.run("ln -sfn /opt/miniconda3/envs/testbed /root/.venv")
+                baseline_untracked, baseline_code = self.run(
+                    "git -C /testbed ls-files --others --exclude-standard"
+                )
+                if str(baseline_code) != "0":
+                    raise RuntimeError("failed to inventory rollout baseline")
+                self._rollout_baseline_untracked = [
+                    line for line in baseline_untracked.splitlines() if line
+                ]
+                return
+
+            image_role, _ = self.run(
+                "cat /opt/r2egym/dataset-adapter 2>/dev/null || true"
+            )
+            if image_role.strip() == "swebench-verified-agent-v1":
+                isolation_output, isolation_code = self.run(
+                    "set -e; for path in /run_tests.sh /root/run_tests.sh "
+                    "/testbed/run_tests.sh /root/test.patch /root/gold.patch "
+                    "/testbed/test.patch /testbed/gold.patch; do "
+                    "test ! -e \"$path\" && test ! -L \"$path\"; done"
+                )
+                if str(isolation_code) != "0":
+                    raise RuntimeError(
+                        "SWE-bench Verified agent isolation failed: " + isolation_output
                     )
                 self.run("ln -sfn /opt/miniconda3/envs/testbed /root/.venv")
                 return
@@ -928,11 +1043,38 @@ class DockerRuntime(ExecutionEnvironment):
             # install required packages
             # self.run("uv pip install tree_sitter_languages") # remove since already installed in new dockers
 
-            self.run("uv pip install chardet")
-
             self.run("find . -name '*.pyc' -delete")
 
             self.run("find . -name '__pycache__' -exec rm -rf {} +")
+
+            image_role, _ = self.run(
+                "cat /opt/r2egym/dataset-adapter 2>/dev/null || true"
+            )
+            prepared_record = self.prepared_image_record or {}
+            agent_reference = prepared_record.get("agent_reference", "")
+            runtime_reference = self.docker_image.split("@", 1)[0]
+            is_agent_image = (
+                image_role.strip() == "r2e-gym-subset-agent-v1"
+                or (agent_reference and runtime_reference == agent_reference)
+                or "-agent@sha256:" in self.docker_image
+                or self.docker_image.endswith("-agent")
+            )
+            if is_agent_image:
+                self.logger.info(
+                    "agent-only R2E image: skipping private verifier asset setup"
+                )
+                isolation_output, isolation_code = self.run(
+                    "rm -rf /r2e_tests /root/r2e_tests /testbed/r2e_tests; "
+                    "rm -f /root/run_tests.sh /testbed/run_tests.sh; "
+                    "for path in /r2e_tests /root/r2e_tests /testbed/r2e_tests "
+                    "/root/run_tests.sh /testbed/run_tests.sh; do "
+                    "test ! -e \"$path\" && test ! -L \"$path\" || exit 1; done"
+                )
+                if str(isolation_code) != "0":
+                    raise RuntimeError(
+                        "agent-only R2E isolation check failed: " + isolation_output
+                    )
+                return
 
             # also delete pycache and pyc from /r2e_tests
             self.run("find /r2e_tests -name '*.pyc' -delete")
@@ -1312,7 +1454,9 @@ class DockerRuntime(ExecutionEnvironment):
             with tarfile.open(fileobj=tar_stream, mode="w") as tar:
                 tar.add(src_path, arcname=os.path.basename(dest_path))
             tar_stream.seek(0)
-            self.container.put_archive(os.path.dirname(dest_path), tar_stream.read())
+            return self.container.put_archive(
+                os.path.dirname(dest_path), tar_stream.read()
+            )
         else:
             # Kubernetes pod copy
             return self._copy_to_container_kubernetes(src_path, dest_path)
@@ -1347,7 +1491,14 @@ class DockerRuntime(ExecutionEnvironment):
         """
         # git add -A && git diff --cached
         # self.run("git add -A")
-        output, _ = self.run("git add -A && git diff --cached")
+        self.run("git add -A")
+        baseline_untracked = getattr(self, "_rollout_baseline_untracked", [])
+        if baseline_untracked:
+            quoted = " ".join(shlex.quote(path) for path in baseline_untracked)
+            self.run(f"git reset -q HEAD -- {quoted}")
+        output, _ = self.run(
+            "git diff --cached --binary --full-index --no-ext-diff"
+        )
         # output, _ = self.run("git diff")
         return output
 
@@ -1362,7 +1513,7 @@ class DockerRuntime(ExecutionEnvironment):
         self.copy_to_container(file_path__, f"/testbed/{file_path_}")
         self.run(f"mv /testbed/{file_path_} /{file_path}")
 
-    def apply_patch(self, patch: str) -> tuple[str, str]:
+    def apply_patch(self, patch: str, *, check: bool = False) -> tuple[str, str]:
         # store the patch locally in a file identifiable by docker container id and timestamp
         # must contain unique patch name with both timestamp and docker image name
         uuid_ = uuid.uuid4()
@@ -1373,8 +1524,15 @@ class DockerRuntime(ExecutionEnvironment):
         # copy the patch to / of the container
         self.copy_to_container(patch_path, f"/{patch_path}")
         # apply the patch
-        output, error_code = self.run(f"git apply --whitespace=fix /{patch_path}")
-        return output, error_code
+        mode = "--check" if check else "--whitespace=fix"
+        try:
+            output, error_code = self.run(f"git apply {mode} /{patch_path}")
+            return output, error_code
+        finally:
+            try:
+                os.unlink(patch_path)
+            except FileNotFoundError:
+                pass
 
     def reverse_patch(self, patch: str) -> tuple[str, str]:
         # store the patch locally in a file identifiable by docker container id and timestamp
@@ -1470,7 +1628,9 @@ class DockerRuntime(ExecutionEnvironment):
         else:
             return parse_log_fn(f"{self.repo_name}")(log_output)
  
-    def _calculate_reward_swesmith(self, get_test_output=False, timeout: int = 1800) -> Tuple[float, str]:
+    def _calculate_reward_swesmith(
+        self, get_test_output=False, timeout: int = 1800
+    ) -> Union[float, Tuple[float, str]]:
         self.logger.info(f"nwo in _calculate_reward_swesmith")
         self.reset_swesmith_tests()
         self.logger.info(f"nwo in _calculate_reward_swesmith after reset_swesmith_tests")
@@ -1483,7 +1643,7 @@ class DockerRuntime(ExecutionEnvironment):
         eval_status_map = self.parse_logs(output)
         
         if not eval_status_map:
-             return 0.0, output
+            return (0.0, output) if get_test_output else 0.0
 
         eval_ref = {
             FAIL_TO_PASS: self.ds.get(FAIL_TO_PASS, []),
@@ -1499,10 +1659,8 @@ class DockerRuntime(ExecutionEnvironment):
         # Use swebench resolution status checker (compatible with structure returned by swesmith)
         success = get_resolution_status(report) == ResolvedStatus.FULL.value
         
-        if success:
-            return 1.0, output
-        else:
-            return 0.0, output
+        reward = 1.0 if success else 0.0
+        return (reward, output) if get_test_output else reward
 
 
     def _calculate_reward_swebench(self, get_test_output=False, timeout: int = 300) -> float:
@@ -1638,6 +1796,7 @@ class DockerRuntime(ExecutionEnvironment):
         self.start_container(
             self.docker_image, self.command, self.container_name, **self.docker_kwargs
         )
+        self.setup_env()
 
     def close(self):
         self.stop_container()
