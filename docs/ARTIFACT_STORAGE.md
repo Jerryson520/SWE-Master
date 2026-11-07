@@ -2,6 +2,8 @@
 
 Source code, configuration, tests, and small manifests belong in Git. Rollouts,
 JSONL training data, model weights, checkpoints, and runtime logs do not.
+Virtual environments are runtime state rather than artifacts and live below
+`SWE_MASTER_RUNTIME_ROOT`.
 
 Set `SWE_MASTER_ARTIFACT_ROOT` to the external artifact directory. Evaluation
 manifests use paths relative to that root; no machine-specific absolute path is
@@ -15,8 +17,14 @@ $SWE_MASTER_ARTIFACT_ROOT/
 ├── evaluations/qwen3-4b-reasoning-full-sft/
 ├── diagnostics/stop-boundary/
 ├── teacher-rollouts/
-├── environments/r2e-gym-venv/
 └── legacy-backups/
+```
+
+The corresponding runtime layout is:
+
+```text
+$SWE_MASTER_RUNTIME_ROOT/
+└── venvs/r2e-gym/
 ```
 
 The private artifact repositories are:
