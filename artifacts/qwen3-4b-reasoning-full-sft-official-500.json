@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "artifact_id": "qwen3-4b-reasoning-content-full-sft-official-topp08-pp0",
+  "artifact_type": "evaluation",
+  "created_at": "2026-10-25T16:05:07+08:00",
+  "base_model": "Qwen3-4B-Instruct-2507",
+  "tokenizer": "Qwen3-4B-Instruct-2507",
+  "data_version": "leaf-pretokenized-template-v3/promote_to_content_raw",
+  "artifact_root_env": "SWE_MASTER_ARTIFACT_ROOT",
+  "relative_root": "evaluations/qwen3-4b-reasoning-full-sft",
+  "sampling": {"temperature": 0.7, "top_p": 0.8, "top_k": 20, "presence_penalty": 0, "thinking": false},
+  "runtime": {"gpus": 6, "workers": 72, "max_model_len": 81920, "context_window": 81920, "context_safety_margin": 8192, "max_tokens_per_turn": 8192, "max_turns": 150},
+  "metrics": {"rollouts": 500, "unique_tasks": 500, "nonempty_patches": 146, "empty_patches": 354, "official_reports": 146, "resolved": 50, "resolved_rate": 0.10, "evaluator_errors": 0},
+  "files": [
+    {"path": "results/qwen3-4b-instruct-2507-v3-reasoning-fullsft-official-topp08-pp0-w72-predictions.jsonl", "size": 5778558, "sha256": "f360da69b3672a3b9ef89e29a4db07fb9063d9bf40f03d5f7dff579ac5d8f7fb", "record_count": 500},
+    {"path": "results/qwen3-4b-instruct-2507-v3-reasoning-fullsft-official-topp08-pp0-w72-official-eval.log", "size": 5783, "sha256": "7030033140fb40c7ca0a100d531c3cef01969178bf168ee0577d72475088b5c7"}
+  ],
+  "historical_control": {"sampling": "top_p=0.95,presence_penalty=0", "resolved": 49, "denominator": 500, "status": "historical-only"}
+}

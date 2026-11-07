@@ -1,4 +1,5 @@
 __pycache__/
+.pytest_cache/
 *.py[cod]
 *.egg-info/
 .venv/
@@ -10,7 +11,14 @@ results/
 outputs/
 checkpoints/
 tensorboard/
+wandb/
+rl_readiness/
+patch_backups/
 *.bak
+*.before-*
+*.pre-recovery-*
+*.pid
+*.jsonl.lock
 
 # Large datasets and model artifacts live in private Hugging Face repositories.
 *.jsonl

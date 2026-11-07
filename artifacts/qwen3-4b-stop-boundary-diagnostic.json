@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "artifact_id": "qwen3-4b-stop-boundary-panel",
+  "artifact_type": "diagnostic",
+  "artifact_root_env": "SWE_MASTER_ARTIFACT_ROOT",
+  "relative_root": "diagnostics/stop-boundary/qwen3-4b-stop-boundary-panel",
+  "case_count": 30,
+  "score_row_count": 350,
+  "files": [
+    {"path": "diagnostic_cases.jsonl", "size": 3760026, "sha256": "28e3049d9c5da5a5b162c021a3aae08a88d1e14c5e3bf240f1b9fc484243a7a3", "record_count": 30},
+    {"path": "boundary_logprobs.jsonl", "size": 231579, "sha256": "a0e01d6955a543b5d6ac1554c74706fab7fb385b340857ab7b57949f87dd7d11", "record_count": 350},
+    {"path": "manifest.json", "size": 1254, "sha256": "39e316224617f1f99934a06a704b35954e6cdf987f9f7cc7374414af66e4d2ea"},
+    {"path": "probe_manifest.json", "size": 491, "sha256": "9b46c721d3a6026025d1ecb84c543841b9079632c1ff667126af2d886959e0f9"}
+  ]
+}

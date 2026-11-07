@@ -83,6 +83,27 @@ class StartupRegressionTests(unittest.TestCase):
             sum(isinstance(node, ast.Raise) for node in ast.walk(function)), 2
         )
 
+    def test_rollout_only_swebench_uses_isolated_pinned_ripgrep(self):
+        tree = parse_source("src/r2egym/agenthub/runtime/docker.py")
+        function = find_function(tree, "setup_env_swebench")
+        function_source = ast.unparse(function)
+
+        self.assertIn("_swebench_rollout_only", function_source)
+        self.assertIn("resolve_host_rg", function_source)
+        self.assertIn("ripgrep 15.1.0", function_source)
+        self.assertIn(
+            "ebeaf56f8a25e102e9419933423738b3a2a613a444fd749d695e15eba53f71f2",
+            function_source,
+        )
+        self.assertIn("/root/gold.patch", function_source)
+
+        initializer = find_function(tree, "__init__")
+        initializer_source = ast.unparse(initializer)
+        self.assertIn(
+            "self.swebench_verified and (not self.ds.get('_swebench_rollout_only'))",
+            initializer_source,
+        )
+
     def test_loopback_llm_is_added_to_no_proxy(self):
         tree = parse_source("src/r2egym/agenthub/run/edit.py")
         function = find_function(tree, "configure_loopback_llm_no_proxy")

@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "artifact_id": "qwen3-4b-instruct-2507-base-official-topp08-pp0",
+  "artifact_type": "evaluation",
+  "created_at": "2026-10-25T17:06:37+08:00",
+  "model": "Qwen3-4B-Instruct-2507",
+  "tokenizer": "Qwen3-4B-Instruct-2507",
+  "artifact_root_env": "SWE_MASTER_ARTIFACT_ROOT",
+  "relative_root": "evaluations/qwen3-4b-instruct-2507-base",
+  "sampling": {"temperature": 0.7, "top_p": 0.8, "top_k": 20, "presence_penalty": 0, "thinking": false},
+  "runtime": {"gpus": 3, "workers": 48, "max_model_len": 81920, "context_window": 81920, "context_safety_margin": 8192, "max_tokens_per_turn": 8192, "max_turns": 150},
+  "metrics": {"rollouts": 500, "unique_tasks": 500, "nonempty_patches": 174, "empty_patches": 326, "official_reports": 174, "resolved": 45, "resolved_rate": 0.09, "evaluator_errors": 0},
+  "files": [
+    {"path": "results/qwen3-4b-instruct-2507-base-official-topp08-pp0-w48-predictions.jsonl", "size": 1592558, "sha256": "337f075ab81eb914e52ab2090ff1469e13071ec69a91f0f3554c6932ce4d3710", "record_count": 500},
+    {"path": "results/qwen3-4b-instruct-2507-base-official-topp08-pp0-w48-official-eval.log", "size": 6893, "sha256": "c56f0babbcf4a01dcc159fc2382591daef1a0cb5bc12927ad5d7e4f06e1622a7"}
+  ],
+  "notes": "Official SWE-bench 3.0.2 scoring. Empty patches remain unresolved in the 500-task denominator."
+}

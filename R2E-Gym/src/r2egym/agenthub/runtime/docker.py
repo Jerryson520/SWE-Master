@@ -212,7 +212,7 @@ class DockerRuntime(ExecutionEnvironment):
 
             # self.logger.info(f"swegym test_spec:\n{self.test_spec}")
 
-        if self.swebench_verified:
+        if self.swebench_verified and not self.ds.get("_swebench_rollout_only"):
             # also create a test spec for swebench verified dockers (useful for grading)
             self.logger.info("started make test spec")
 
@@ -823,6 +823,43 @@ class DockerRuntime(ExecutionEnvironment):
     def setup_env_swebench(self):
         try:
             self.run("git reset --hard HEAD")
+
+            if self.ds.get("_swebench_rollout_only"):
+                from r2egym.agenthub.leaf.tools.ripgrep import resolve_host_rg
+
+                isolation_output, isolation_code = self.run(
+                    "set -e; for path in /run_tests.sh /eval.sh /root/run_tests.sh "
+                    "/testbed/run_tests.sh /root/test.patch /root/gold.patch "
+                    "/testbed/test.patch /testbed/gold.patch; do "
+                    "test ! -e \"$path\" && test ! -L \"$path\"; done"
+                )
+                if str(isolation_code) != "0":
+                    raise RuntimeError(
+                        "SWE-bench rollout image exposes grading artifacts: "
+                        + isolation_output
+                    )
+                copied = self.copy_to_container(
+                    str(resolve_host_rg()), "/usr/local/bin/rg"
+                )
+                if copied is False:
+                    raise RuntimeError("failed to copy ripgrep into rollout container")
+                rg_output, rg_code = self.run(
+                    "set -e; chmod 0755 /usr/local/bin/rg; "
+                    "test -f /usr/local/bin/rg; "
+                    "test -x /usr/local/bin/rg; "
+                    "test ! -L /usr/local/bin/rg; "
+                    "/usr/local/bin/rg --version | grep -F 'ripgrep 15.1.0'; "
+                    "printf '%s  %s\\n' "
+                    "'ebeaf56f8a25e102e9419933423738b3a2a613a444fd749d695e15eba53f71f2' "
+                    "'/usr/local/bin/rg' | sha256sum -c -"
+                )
+                if str(rg_code) != "0":
+                    raise RuntimeError(
+                        "failed to install pinned ripgrep 15.1.0: "
+                        + str(rg_output).strip()[:1000]
+                    )
+                self.run("ln -sfn /opt/miniconda3/envs/testbed /root/.venv")
+                return
 
             # SWE-Bench Verified must use R2E-Gym's custom image. Do not silently
             # continue with a look-alike image that only contains /testbed.

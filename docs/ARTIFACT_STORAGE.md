@@ -3,6 +3,22 @@
 Source code, configuration, tests, and small manifests belong in Git. Rollouts,
 JSONL training data, model weights, checkpoints, and runtime logs do not.
 
+Set `SWE_MASTER_ARTIFACT_ROOT` to the external artifact directory. Evaluation
+manifests use paths relative to that root; no machine-specific absolute path is
+part of the executable configuration. The evaluation host currently uses this
+layout:
+
+```text
+$SWE_MASTER_ARTIFACT_ROOT/
+├── datasets/r2e-gym/swebench-verified-500/
+├── evaluations/qwen3-4b-instruct-2507-base/
+├── evaluations/qwen3-4b-reasoning-full-sft/
+├── diagnostics/stop-boundary/
+├── teacher-rollouts/
+├── environments/r2e-gym-venv/
+└── legacy-backups/
+```
+
 The private artifact repositories are:
 
 - Dataset: `JJerry0000/swe-master-teacher-rollout-300x3`

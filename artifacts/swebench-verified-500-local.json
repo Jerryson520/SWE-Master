@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "artifact_id": "swebench-verified-500-local",
+  "artifact_type": "dataset",
+  "artifact_root_env": "SWE_MASTER_ARTIFACT_ROOT",
+  "relative_path": "datasets/r2e-gym/swebench-verified-500/canonical.jsonl",
+  "record_count": 500,
+  "unique_tasks": 500,
+  "size": 275858048,
+  "sha256": "94ff9d0f0d161936a3a78ef06c01fe43e17cc19c2b3a9c977586395723ab23d4",
+  "legacy_shards": "Original 2-, 3-, and 6-shard layouts are preserved under legacy-backups/data-original-shards and are not active inputs."
+}
