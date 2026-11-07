@@ -8,5 +8,10 @@
   "unique_tasks": 500,
   "size": 275858048,
   "sha256": "94ff9d0f0d161936a3a78ef06c01fe43e17cc19c2b3a9c977586395723ab23d4",
-  "legacy_shards": "Original 2-, 3-, and 6-shard layouts are preserved under legacy-backups/data-original-shards and are not active inputs."
+  "image_manifest": {
+    "path": "datasets/r2e-gym/swebench-verified-500/image-manifest-paired-v1.json",
+    "size": 3273382,
+    "sha256": "ff25cb1a1586c9a71e9a89bc4791f643b63e84e8ba9bf4d42197834a4f5fdbb6"
+  },
+  "legacy_shards": "Original 2-, 3-, and 6-shard layouts were verified redundant and removed on 2026-11-07."
 }

@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "artifact_id": "qwen3-4b-reasoning-full-sft-historical-topp095-pp0",
+  "artifact_type": "evaluation",
+  "status": "historical-control",
+  "artifact_root_env": "SWE_MASTER_ARTIFACT_ROOT",
+  "relative_root": "evaluations/qwen3-4b-reasoning-full-sft-historical-topp095-pp0",
+  "sampling": {"top_p": 0.95, "presence_penalty": 0},
+  "metrics": {"rollouts": 500, "nonempty_patches": 184, "official_reports": 184, "resolved": 49, "resolved_rate": 0.098, "evaluator_errors": 0},
+  "files": [
+    {"path": "results/qwen3-4b-20250527-v3-reasoning-fullsft-verified500-rgfix-w24-predictions.jsonl", "size": 4533201, "sha256": "70d03105882646f538dec962e7fd987acf91bcc236a93ee4e249380880c753dd", "record_count": 500},
+    {"path": "results/qwen3-4b-20250527-v3-fullsft-rgfix-verified500-official-summary.json", "size": 475, "sha256": "a52e7f1c26bded83f9d20ca6629c6c32e66bace2e6bb64b7b7c385c3dab490eb"},
+    {"path": "results/qwen3-4b-20250527-v3-fullsft-rgfix-verified500-official-eval.log", "size": 7371, "sha256": "9f93feda85d941b214af170753fe2b0f96823ea47c21ccb38a9881c201dd2e1e"}
+  ],
+  "notes": "The 20250527 filename component is a historical labeling error; the training base was Qwen3-4B-Instruct-2507. This run is not the primary result because its sampling differs from the official top-p 0.8 comparison."
+}

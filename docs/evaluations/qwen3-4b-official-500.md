@@ -11,7 +11,9 @@ Both official runs use SWE-bench 3.0.2, the same 500 tasks, prompt, tool schema,
 | Qwen3-4B-Instruct-2507 Base | 500 | 174 | 174 | 45 (9.00%) | 0 |
 | reasoning-content Full SFT | 500 | 146 | 146 | 50 (10.00%) | 0 |
 
-The Full SFT data uses `leaf-pretokenized-template-v3/promote_to_content_raw`: `reasoning_content` is promoted into ordinary assistant content without `<think>`, existing content is appended with two newlines, and structured tool calls retain their original object and order. The five-task gain is an aggregate training-treatment result, not an isolated causal estimate. The earlier top-p 0.95 run resolved 49/500 and is retained only as a historical control.
+The Full SFT data uses `leaf-pretokenized-template-v3/promote_to_content_raw`: `reasoning_content` is promoted into ordinary assistant content without `<think>`, existing content is appended with two newlines, and structured tool calls retain their original object and order. The five-task gain is an aggregate training-treatment result, not an isolated causal estimate.
+
+The earlier top-p 0.95 run resolved 49/500 and is retained only as a historical control under `$SWE_MASTER_ARTIFACT_ROOT/evaluations/qwen3-4b-reasoning-full-sft-historical-topp095-pp0`. Its checksum manifest is `artifacts/qwen3-4b-reasoning-full-sft-historical-topp095.json`.
 
 ## Commands
 
